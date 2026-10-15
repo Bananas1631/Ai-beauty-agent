@@ -1,17 +1,22 @@
 """Салон и подключённые к нему каналы. К салону привязаны все остальные данные."""
 
+from typing import Any
+
 from sqlalchemy import (
     CheckConstraint,
     LargeBinary,
     String,
     UniqueConstraint,
     false,
+    text,
     true,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from beauty_agent.db.base import Base, SalonOwned, Timestamps, UUIDPrimaryKey, str_enum
 from beauty_agent.domain.enums import Channel
+from beauty_agent.domain.salon_settings import SalonSettings
 
 
 class Salon(UUIDPrimaryKey, Timestamps, Base):
@@ -25,6 +30,13 @@ class Salon(UUIDPrimaryKey, Timestamps, Base):
     timezone: Mapped[str] = mapped_column(String(64), server_default="Europe/Moscow")
     yclients_company_id: Mapped[int | None] = mapped_column(unique=True)  # ID филиала
     is_demo: Mapped[bool] = mapped_column(server_default=false())
+    # Настройки салона: модель LLM, версия промпта, лимит расходов (domain/salon_settings.py)
+    settings: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+
+    @property
+    def config(self) -> SalonSettings:
+        """Настройки, проверенные Pydantic: опечатка в JSONB не уйдёт дальше этой строки."""
+        return SalonSettings.model_validate(self.settings or {})
 
     channel_accounts: Mapped[list["ChannelAccount"]] = relationship(
         back_populates="salon",

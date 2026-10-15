@@ -52,3 +52,11 @@ class KnowledgeSource(StrEnum):
     WEBSITE = auto()  # страница сайта салона
     FAQ = auto()  # вопросы и ответы, которые салон написал сам
     CRM = auto()  # карточка филиала в YCLIENTS: адрес, часы работы, описание
+
+
+class CrmKind(StrEnum):
+    """Откуда салон берёт каталог и свободное время."""
+
+    YCLIENTS = auto()
+    DEMO = auto()  # реальные слоты YCLIENTS, но запись только имитируется
+    FAKE = auto()  # фейковый CRM: make seed и проверка без доступа к YCLIENTS

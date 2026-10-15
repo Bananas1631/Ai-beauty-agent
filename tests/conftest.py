@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 from testcontainers.community.postgres import PostgresContainer
 from testcontainers.community.redis import RedisContainer
 
@@ -80,24 +80,34 @@ def migrated(postgres: PostgresSettings, alembic_config: Config) -> PostgresSett
 
 
 @pytest.fixture
-async def session(migrated: PostgresSettings) -> AsyncIterator[AsyncSession]:
-    """Сессия внутри внешней транзакции, которая откатывается после теста.
+async def connection(migrated: PostgresSettings) -> AsyncIterator[AsyncConnection]:
+    """Соединение с внешней транзакцией, которая откатывается после теста."""
+    engine = make_engine(migrated)
+    try:
+        async with engine.connect() as conn:
+            transaction = await conn.begin()
+            try:
+                yield conn
+            finally:
+                await transaction.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.fixture
+def session_factory(connection: AsyncConnection) -> async_sessionmaker[AsyncSession]:
+    """Сессии внутри внешней транзакции теста.
 
     commit() в коде и тестах фиксирует только точку сохранения (SAVEPOINT), поэтому данные
     одного теста не видны другим, а ограничения базы срабатывают как обычно.
     """
-    engine = make_engine(migrated)
-    try:
-        async with engine.connect() as connection:
-            transaction = await connection.begin()
-            session = AsyncSession(bind=connection, join_transaction_mode="create_savepoint", expire_on_commit=False)
-            try:
-                yield session
-            finally:
-                await session.close()
-                await transaction.rollback()
-    finally:
-        await engine.dispose()
+    return async_sessionmaker(bind=connection, join_transaction_mode="create_savepoint", expire_on_commit=False)
+
+
+@pytest.fixture
+async def session(session_factory: async_sessionmaker[AsyncSession]) -> AsyncIterator[AsyncSession]:
+    async with session_factory() as test_session:
+        yield test_session
 
 
 @pytest.fixture
@@ -141,8 +151,13 @@ def settings(migrated: PostgresSettings, redis_settings: RedisSettings) -> Setti
 
 
 @pytest.fixture
-async def app(settings: Settings, session: AsyncSession) -> AsyncIterator[FastAPI]:
-    """Приложение с настоящим lifespan; сессия БД подменена тестовой с откатом."""
+async def app(
+    settings: Settings,
+    session: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession],
+    redis: Redis,
+) -> AsyncIterator[FastAPI]:
+    """Приложение с настоящим lifespan; БД — внутри транзакции теста, Redis очищается после теста."""
     application = create_app(settings)
 
     async def test_session() -> AsyncIterator[AsyncSession]:
@@ -150,6 +165,9 @@ async def app(settings: Settings, session: AsyncSession) -> AsyncIterator[FastAP
 
     application.dependency_overrides[get_session] = test_session
     async with application.router.lifespan_context(application):
+        # Сервисы, открывающие свои сессии (веб-чат, сервис диалога), работают в той же транзакции
+        application.state.session_factory = session_factory
+        application.state.conversations.session_factory = session_factory
         yield application
 
 

@@ -247,9 +247,11 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
 def save_report(report: dict[str, Any], directory: Path) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     stem = f"{report['started_at'][:10]}-{report['dataset'].replace('/', '-')}"
-    (directory / f"{stem}.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+    (directory / f"{stem}.json").write_text(payload, encoding="utf-8", newline="\n")
     path = directory / f"{stem}.md"
-    path.write_text(render_markdown(report["dataset"], report["prompt_version"], report), encoding="utf-8")
+    markdown = render_markdown(report["dataset"], report["prompt_version"], report)
+    path.write_text(markdown, encoding="utf-8", newline="\n")
     return path
 
 

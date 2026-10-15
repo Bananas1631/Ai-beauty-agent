@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {% if salon.is_demo %}<meta name="robots" content="noindex, nofollow">{% endif %}
+  <title>{{ salon.name }} — онлайн-запись</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='chat.css') }}">
+</head>
+<body>
+  <header class="header">
+    <h1 class="header__title">{{ salon.name }}</h1>
+    {% if salon.is_demo %}<span class="badge" title="Записи не создаются в системе салона">Демо</span>{% endif %}
+  </header>
+
+  <div class="layout">
+    <aside class="prices" aria-label="Услуги и цены">
+      <h2>Услуги и цены</h2>
+      {% for category, services in categories.items() %}
+        <section>
+          <h3>{{ category }}</h3>
+          <ul>
+            {% for service in services %}
+              <li>
+                <span class="prices__name">{{ service.name }}</span>
+                <span class="prices__price">{{ service.price_text() }}</span>
+              </li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% else %}
+        <p>Каталог услуг скоро появится.</p>
+      {% endfor %}
+    </aside>
+
+    <main class="chat" id="chat" data-slug="{{ salon.slug }}" aria-live="polite">
+      <div class="chat__messages" id="messages">
+        <div class="message message--agent">Здравствуйте! Я администратор салона «{{ salon.name }}». Помогу выбрать услугу и записаться.</div>
+      </div>
+      <div class="chat__typing" id="typing" hidden>Администратор печатает…</div>
+      <form class="chat__form" id="form" autocomplete="off">
+        <label class="visually-hidden" for="input">Сообщение</label>
+        <input class="chat__input" id="input" name="text" maxlength="2000" placeholder="Напишите сообщение…" required>
+        <button class="chat__send" type="submit">Отправить</button>
+      </form>
+      {% if salon.is_demo %}
+        <p class="chat__note">Это демо: запись имитируется и не появляется в системе салона.</p>
+      {% endif %}
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', path='chat.js') }}" defer></script>
+</body>
+</html>

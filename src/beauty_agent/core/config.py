@@ -31,6 +31,8 @@ class AppSettings(EnvSection):
     log_json: bool = True
     # сколько /ready ждёт ответа одной зависимости, прежде чем признать её недоступной
     ready_timeout_s: float = 2.0
+    # адрес сервиса снаружи: с него открывается страница салона, и его Origin разрешён веб-чату
+    public_url: str = "http://localhost:8000"
 
     @property
     def docs_enabled(self) -> bool:
