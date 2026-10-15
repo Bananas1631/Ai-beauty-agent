@@ -5,7 +5,7 @@ RUN := poetry run
 COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
 
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test audit migrate-check check up down ps logs migrate
+.PHONY: help install lint format typecheck test audit migrate-check check up down ps logs migrate chat
 
 help:
 	@echo make install   - install dependencies and git hooks
@@ -21,6 +21,7 @@ help:
 	@echo make ps        - service status
 	@echo make logs      - follow api logs
 	@echo make migrate   - apply database migrations
+	@echo make chat      - chat with the agent in the terminal on the fake CRM
 
 install:
 	poetry install
@@ -65,3 +66,6 @@ logs:
 
 migrate:
 	$(RUN) alembic upgrade head
+
+chat:
+	$(RUN) python -m scripts.chat_cli --debug

@@ -23,3 +23,11 @@ def test_uuid7_grows_with_time() -> None:
     second = uuid7()
 
     assert first < second  # поэтому новые строки дописываются в конец индекса
+
+
+def test_uuid7_is_monotonic_within_a_millisecond() -> None:
+    values = [uuid7() for _ in range(5000)]  # тысячи ключей за одну-две миллисекунды
+
+    assert values == sorted(values)
+    assert len(set(values)) == len(values)
+    assert all(value.version == 7 and value.variant == uuid.RFC_4122 for value in values)

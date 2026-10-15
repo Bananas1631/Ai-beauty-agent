@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -18,15 +19,33 @@ NAMING_CONVENTION = {
 }
 
 
-def uuid7() -> uuid.UUID:
-    """UUID версии 7 (RFC 9562): первые 48 бит — время в миллисекундах.
+_uuid7_lock = threading.Lock()
+_uuid7_last_ms = 0
+_uuid7_counter = 0
 
-    Новые ключи растут со временем, поэтому вставка дописывает индекс с конца,
-    а не в случайное место, как UUID4. В Python 3.12 готовой uuid7() нет.
+
+def uuid7() -> uuid.UUID:
+    """UUID версии 7 (RFC 9562): первые 48 бит — время в миллисекундах, затем 12-битный счётчик.
+
+    Новые ключи растут со временем, поэтому вставка дописывает индекс с конца, а не в случайное
+    место, как UUID4. Счётчик (метод 1 из RFC 9562) делает ключи монотонными и внутри одной
+    миллисекунды: по id можно упорядочить сообщения, записанные одной транзакцией с одинаковым now().
+    В Python 3.12 готовой uuid7() нет.
     """
-    value = ((time.time_ns() // 1_000_000) << 80) | int.from_bytes(os.urandom(10))
-    value = (value & ~(0xF << 76)) | (0x7 << 76)  # 4 бита версии: 7
-    value = (value & ~(0x3 << 62)) | (0x2 << 62)  # 2 бита варианта: RFC 9562
+    global _uuid7_last_ms, _uuid7_counter
+    with _uuid7_lock:
+        now_ms = time.time_ns() // 1_000_000
+        if now_ms > _uuid7_last_ms:
+            _uuid7_last_ms = now_ms
+            _uuid7_counter = int.from_bytes(os.urandom(2)) & 0x3FF  # случайный старт с запасом до переполнения
+        else:
+            _uuid7_counter += 1
+            if _uuid7_counter > 0xFFF:  # 4096 ключей за миллисекунду — занимаем следующую
+                _uuid7_last_ms += 1
+                _uuid7_counter = 0
+        timestamp, counter = _uuid7_last_ms, _uuid7_counter
+    random_tail = int.from_bytes(os.urandom(8)) & ((1 << 62) - 1)
+    value = (timestamp << 80) | (0x7 << 76) | (counter << 64) | (0x2 << 62) | random_tail
     return uuid.UUID(int=value)
 
 
