@@ -5,7 +5,7 @@ RUN := poetry run
 COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
 
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test check up down ps logs migrate
+.PHONY: help install lint format typecheck test audit migrate-check check up down ps logs migrate
 
 help:
 	@echo make install   - install dependencies and git hooks
@@ -13,6 +13,8 @@ help:
 	@echo make format    - ruff: fix and format the code
 	@echo make typecheck - mypy in strict mode
 	@echo make test      - pytest with coverage, minimum 80 percent
+	@echo make audit     - pip-audit: known vulnerabilities in dependencies
+	@echo make migrate-check - alembic check: models changed but no migration
 	@echo make check     - lint, typecheck and test
 	@echo make up        - build and start services in Docker, wait until healthy
 	@echo make down      - stop services, data in volumes is kept
@@ -36,7 +38,16 @@ typecheck:
 	$(RUN) mypy
 
 test:
-	$(RUN) pytest --cov
+	$(RUN) pytest --cov --cov-report=term-missing --cov-report=xml
+
+# --skip-editable: сам проект не опубликован в PyPI, проверять в нём нечего
+audit:
+	$(RUN) pip-audit --skip-editable --progress-spinner off
+
+# Нужна база со схемой: локально — make up, в CI — сервис postgres
+migrate-check:
+	$(RUN) alembic upgrade head
+	$(RUN) alembic check
 
 check: lint typecheck test
 

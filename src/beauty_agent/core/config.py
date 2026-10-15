@@ -28,6 +28,13 @@ class AppSettings(EnvSection):
     env: Literal["local", "test", "prod"] = "local"
     log_level: str = "INFO"
     log_json: bool = True
+    # сколько /ready ждёт ответа одной зависимости, прежде чем признать её недоступной
+    ready_timeout_s: float = 2.0
+
+    @property
+    def docs_enabled(self) -> bool:
+        """Swagger на /docs — только вне прода: схема API не подсказывает атакующему, куда стучаться."""
+        return self.env != "prod"
 
 
 class PostgresSettings(EnvSection):

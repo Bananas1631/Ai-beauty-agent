@@ -1,0 +1,8 @@
+# В репозитории и в рабочей папке — переводы строк LF, как на сервере и в Docker.
+# Иначе Git на Windows превращает их в CRLF, и shell-скрипты в контейнере ломаются.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

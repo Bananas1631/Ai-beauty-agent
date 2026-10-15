@@ -1,5 +1,7 @@
 # beauty-agent
 
+[![CI](https://github.com/Bananas1631/Ai-beauty-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Bananas1631/Ai-beauty-agent/actions/workflows/ci.yml)
+
 ИИ-администратор для салонов красоты: круглосуточно отвечает клиентам в мессенджерах и записывает их к мастеру через YCLIENTS.
 
 > Статус: в разработке, октябрь — декабрь 2026.

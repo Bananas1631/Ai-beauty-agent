@@ -1,0 +1,113 @@
+# CI: проверка кода, тесты с покрытием и сборка образа на каждый push в main и каждый PR.
+# Команды те же, что локально (make lint, make test): «у меня работает» = «в CI работает».
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Токен GITHUB_TOKEN только читает репозиторий: workflow ничего не публикует
+permissions:
+  contents: read
+
+# Новый push в ту же ветку отменяет устаревший запуск
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  POETRY_VERSION: "2.5.1"
+
+jobs:
+  lint:
+    name: Code checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # База нужна только для alembic check: модели изменили, а миграцию не создали — CI красный
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: beauty
+          POSTGRES_PASSWORD: beauty
+          POSTGRES_DB: beauty
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U beauty -d beauty"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: beauty
+      POSTGRES_PASSWORD: beauty
+      POSTGRES_DB: beauty
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install Poetry
+        run: pipx install "poetry==${POETRY_VERSION}"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: poetry
+      - name: Install dependencies
+        run: poetry install --no-interaction
+      - name: Lint and format
+        run: make lint
+      - name: Type check
+        run: make typecheck
+      - name: Migrations match models
+        run: make migrate-check
+      - name: Known vulnerabilities in dependencies
+        run: make audit
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install Poetry
+        run: pipx install "poetry==${POETRY_VERSION}"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: poetry
+      - name: Install dependencies
+        run: poetry install --no-interaction
+      # PostgreSQL и Redis тесты поднимают сами через testcontainers: Docker на раннере есть
+      - name: Tests with coverage
+        run: make test
+      - name: Coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: ignore
+          retention-days: 14
+
+  build:
+    name: Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v3
+      # Сломанная сборка обнаруживается в PR, а не при деплое
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: false
+          tags: beauty-agent:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
