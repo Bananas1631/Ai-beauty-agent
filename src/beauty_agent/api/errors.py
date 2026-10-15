@@ -14,7 +14,13 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from beauty_agent.api.middleware import TRACE_HEADER
-from beauty_agent.domain.errors import ConflictError, DomainError, DomainValidationError, NotFoundError
+from beauty_agent.domain.errors import (
+    ConflictError,
+    DomainError,
+    DomainValidationError,
+    NotFoundError,
+    ProviderUnavailableError,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -25,6 +31,7 @@ _STATUS_BY_ERROR: tuple[tuple[type[DomainError], HTTPStatus], ...] = (
     (NotFoundError, HTTPStatus.NOT_FOUND),
     (ConflictError, HTTPStatus.CONFLICT),
     (DomainValidationError, HTTPStatus.UNPROCESSABLE_ENTITY),
+    (ProviderUnavailableError, HTTPStatus.SERVICE_UNAVAILABLE),
 )
 
 

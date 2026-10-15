@@ -21,3 +21,6 @@ htmlcov/
 .vscode/
 Thumbs.db
 .DS_Store
+
+# hypothesis хранит здесь найденные примеры
+.hypothesis/

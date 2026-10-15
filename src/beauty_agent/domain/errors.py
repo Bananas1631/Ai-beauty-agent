@@ -25,3 +25,36 @@ class ConflictError(DomainError):
 
 class DomainValidationError(DomainError):
     default_message = "Данные не прошли проверку"
+
+
+# ---------------------------------------------------------------- запись и CRM
+
+
+class SlotTakenError(ConflictError):
+    default_message = "Это время уже занято"
+
+
+class OfferExpiredError(ConflictError):
+    default_message = "Предложенный вариант устарел — подберу время заново"
+
+
+class BookingInProgressError(ConflictError):
+    default_message = "Эта запись уже оформляется"
+
+
+class ProviderUnavailableError(DomainError):
+    """CRM недоступна: таймаут, 5xx, лимит запросов или разомкнут circuit breaker."""
+
+    default_message = "Система записи салона временно недоступна"
+
+
+class ProviderAuthError(DomainError):
+    """CRM отклонила токен: нет доступа к филиалу."""
+
+    default_message = "Нет доступа к системе записи салона"
+
+
+class ConfirmationRequiredError(DomainError):
+    """CRM требует подтвердить телефон кодом из SMS."""
+
+    default_message = "Нужен код подтверждения из SMS"
