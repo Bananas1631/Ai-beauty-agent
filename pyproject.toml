@@ -1,0 +1,88 @@
+[project]
+name = "beauty-agent"
+version = "0.1.0"
+description = "AI administrator for beauty salons"
+authors = [
+    {name = "Maksim Lyubchenko", email = "144202898+Bananas1631@users.noreply.github.com"}
+]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi (>=0.142.1,<0.143.0)",
+    "uvicorn[standard] (>=0.54.0,<0.55.0)",
+    "pydantic (>=2.13.5,<3.0.0)",
+    "pydantic-settings (>=2.15.0,<3.0.0)",
+    "sqlalchemy[asyncio] (>=2.1.1,<3.0.0)",
+    "asyncpg (>=0.31.0,<0.32.0)",
+    "alembic (>=1.20.0,<2.0.0)",
+    "redis (>=8.1.0,<9.0.0)",
+    "httpx (>=0.28.1,<0.29.0)",
+    "structlog (>=26.1.0,<27.0.0)"
+]
+
+
+[tool.poetry]
+packages = [{ include = "beauty_agent", from = "src" }]
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.1.1,<10.0.0)",
+    "pytest-asyncio (>=1.4.0,<2.0.0)",
+    "pytest-cov (>=7.1.0,<8.0.0)",
+    "testcontainers[postgres,redis] (>=4.15.0,<5.0.0)",
+    "ruff (>=0.16.9,<0.17.0)",
+    "mypy (>=2.3.1,<3.0.0)",
+    "pre-commit (>=4.6.2,<5.0.0)"
+]
+
+# ---------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",  # pycodestyle и pyflakes: стиль и явные ошибки
+    "I",            # isort: порядок импортов
+    "N",            # pep8-naming: имена переменных, функций, классов
+    "UP",           # pyupgrade: современный синтаксис Python
+    "B",            # bugbear: частые ловушки
+    "SIM",          # упрощение кода
+    "ASYNC",        # ошибки в async-коде
+    "S",            # bandit: безопасность
+    "PT",           # стиль тестов pytest
+    "RUF",          # правила самого ruff
+]
+ignore = ["RUF001", "RUF002", "RUF003"]  # кириллица в строках и комментариях — не ошибка
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106"]  # assert в тестах — норма
+
+# ---------------------------------------------------------------- mypy
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
+
+# ---------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+# ---------------------------------------------------------------- coverage
+[tool.coverage.run]
+source = ["beauty_agent"]
+branch = true
+# миграции проверяет отдельный тест: применить, откатить, применить снова
+omit = ["*/db/migrations/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

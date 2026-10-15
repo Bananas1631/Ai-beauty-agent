@@ -1,0 +1,79 @@
+# Локальное окружение разработки.
+# Запуск из корня проекта: make up, остановка: make down.
+# Относительные пути в этом файле считаются от папки deploy/.
+name: beauty-agent
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file: ../.env
+    environment:
+      # Внутри сети Docker сервис находится по имени, а не по localhost
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-beauty}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-beauty}
+      POSTGRES_DB: ${POSTGRES_DB:-beauty}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # -h 127.0.0.1: проверять по сети, а не через сокет (почему — в разборе)
+      test:
+        - CMD-SHELL
+        - pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    # RabbitMQ хранит данные в папке с именем узла, а оно строится из hostname
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-beauty}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-beauty}
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  pgdata:
+  redisdata:
+  rabbitmqdata:
