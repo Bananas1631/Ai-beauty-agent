@@ -1,0 +1,121 @@
+# Автодеплой: после зелёного CI на main собирает образ, отправляет его в GitHub Container Registry,
+# по SSH обновляет контейнеры на сервере, применяет миграции и ждёт /ready.
+#
+# Деплой включается переменной репозитория DEPLOY_ENABLED=true (Settings → Variables), когда
+# сервер готов. Нужны секреты окружения production (Settings → Environments → production):
+#   DEPLOY_HOST          адрес сервера
+#   DEPLOY_USER          пользователь на сервере (не root), в группе docker
+#   DEPLOY_SSH_KEY       приватный ключ ed25519 только для деплоя
+#   DEPLOY_KNOWN_HOSTS   строка ssh-keyscan сервера: подлинность сервера проверяется, а не принимается вслепую
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Деплои идут строго по очереди и не прерывают друг друга посреди миграции
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  image:
+    name: Build and push image
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.name.outputs.image }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Image name
+        id: name
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        # имя образа в GHCR — только в нижнем регистре
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}:${SHA}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          tags: ${{ steps.name.outputs.image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+  deploy:
+    name: Deploy to server
+    needs: image
+    if: vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Upload compose files
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: scp deploy/docker-compose.prod.yml deploy/Caddyfile deploy/backup.sh "$USER@$HOST:/opt/beauty-agent/"
+      - name: Pull, migrate, restart, wait for /ready
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          IMAGE: ${{ needs.image.outputs.image }}
+        run: |
+          ssh "$USER@$HOST" "APP_IMAGE='$IMAGE' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/beauty-agent
+          export APP_IMAGE
+          compose="docker compose -f docker-compose.prod.yml"
+          $compose pull api
+          $compose run --rm api alembic upgrade head
+          $compose up -d --remove-orphans
+          for attempt in $(seq 1 30); do
+            if $compose exec -T api python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=3)"; then
+              echo "ready after $attempt attempts"
+              # образ записывается в .env, чтобы ручной docker compose up поднимал ту же версию
+              sed -i "s#^APP_IMAGE=.*#APP_IMAGE=$APP_IMAGE#" .env
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "api is not ready" >&2
+          $compose logs --tail 50 api >&2
+          exit 1
+          REMOTE

@@ -17,12 +17,14 @@ from beauty_agent.core.config import Settings, get_settings
 from beauty_agent.core.db import make_engine, make_session_factory
 from beauty_agent.core.logging import configure_logging
 from beauty_agent.core.redis import make_redis
+from beauty_agent.core.sentry import init_sentry
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Фабрика: настройки и логи готовятся при вызове, а не при импорте модуля."""
     settings = settings or get_settings()
     configure_logging(settings.app.log_level, json_logs=settings.app.log_json)
+    init_sentry(settings.sentry)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

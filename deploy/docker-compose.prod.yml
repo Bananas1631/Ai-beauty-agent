@@ -1,0 +1,99 @@
+# Контейнеры на сервере: api, postgres, redis и Caddy (вход из интернета с HTTPS).
+# Лежит на сервере в /opt/beauty-agent рядом с .env и Caddyfile; обновляет его деплой из CI.
+#   docker compose -f docker-compose.prod.yml up -d
+# В отличие от локального compose: порты баз наружу не открыты, секреты — только из .env,
+# у логов ротация (по умолчанию Docker пишет логи без ограничений, и диск заполняется).
+name: beauty-agent
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  logging: *logging
+
+services:
+  api:
+    <<: *hardening
+    image: "${APP_IMAGE:?APP_IMAGE не задан — ghcr.io/<owner>/<repo>:<sha>}"
+    env_file: .env
+    environment:
+      APP_ENV: prod
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      # api доступен только из внутренней сети Docker через Caddy, поэтому X-Forwarded-For
+      # от Caddy можно доверять: по нему считаются лимиты частоты на IP
+      FORWARDED_ALLOW_IPS: "*"
+    expose:
+      - "8000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  postgres:
+    <<: *hardening
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER не задан}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD не задан}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB не задан}
+    shm_size: 256mb
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    <<: *hardening
+    image: redis:8-alpine
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD не задан}
+    # пароль из переменной окружения контейнера, а не в открытом виде в compose
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  caddy:
+    <<: *hardening
+    image: caddy:2-alpine
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN не задан}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL не задан}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:

@@ -29,19 +29,20 @@ def mask_text(text: str) -> str:
     return PHONE_RE.sub(_mask_phone, EMAIL_RE.sub(_mask_email, text))
 
 
-def _mask_value(value: Any) -> Any:
+def mask_value(value: Any) -> Any:
+    """Маскирует ПДн во всех строках вложенной структуры: логи, события Sentry, трассы."""
     if isinstance(value, str):
         return mask_text(value)
     if isinstance(value, dict):
-        return {key: _mask_value(item) for key, item in value.items()}
+        return {key: mask_value(item) for key, item in value.items()}
     if isinstance(value, list | tuple):
-        return [_mask_value(item) for item in value]
+        return [mask_value(item) for item in value]
     return value
 
 
 def mask_pii(_logger: WrappedLogger, _method: str, event_dict: EventDict) -> EventDict:
     """Процессор structlog: маскирует персональные данные во всех полях события."""
-    return {key: _mask_value(value) for key, value in event_dict.items()}
+    return {key: mask_value(value) for key, value in event_dict.items()}
 
 
 def configure_logging(level: str = "INFO", *, json_logs: bool = True) -> None:

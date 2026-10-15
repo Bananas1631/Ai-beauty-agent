@@ -89,6 +89,16 @@ class YclientsSettings(EnvSection):
     max_search_days: int = 3  # дней с окнами на один поиск: каждый день × мастер — отдельный запрос
 
 
+class SentrySettings(EnvSection):
+    """Sentry или self-hosted GlitchTip на сервере в РФ. Без DSN отправка ошибок выключена."""
+
+    model_config = SettingsConfigDict(env_prefix="SENTRY_")
+
+    dsn: SecretStr | None = None
+    environment: str = "local"
+    traces_sample_rate: float = 0.0
+
+
 class Settings(BaseModel):
     """Все секции вместе. Каждая секция читает свои переменные при создании."""
 
@@ -97,6 +107,7 @@ class Settings(BaseModel):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     yclients: YclientsSettings = Field(default_factory=YclientsSettings)
+    sentry: SentrySettings = Field(default_factory=SentrySettings)
 
 
 @lru_cache

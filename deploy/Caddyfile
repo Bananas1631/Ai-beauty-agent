@@ -1,0 +1,28 @@
+# Caddy — вход из интернета: сам получает сертификат Let's Encrypt и проксирует запросы в api.
+# DOMAIN и ACME_EMAIL приходят из .env через docker-compose.prod.yml.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+
+	# /ready показывает, какая зависимость упала, — это нужно только деплою изнутри сервера
+	@internal path /ready /metrics
+	respond @internal 404
+
+	# Тело запроса больше 1 МБ — не к нам: вебхуки и сообщения чата намного меньше
+	request_body {
+		max_size 1MB
+	}
+
+	reverse_proxy api:8000
+}
