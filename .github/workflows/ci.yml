@@ -100,7 +100,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       # Сломанная сборка обнаруживается в PR, а не при деплое
       - name: Build image
         uses: docker/build-push-action@v6
