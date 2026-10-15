@@ -98,11 +98,11 @@ async def test_handoff_stops_the_agent(
     session: AsyncSession, session_factory: async_sessionmaker[AsyncSession], redis: Redis, fake_salon: Salon
 ) -> None:
     notifier = RecordingNotifier()
-    llm = ScriptedLLM([call_tool("handoff_to_admin", {"reason": "Клиент просит скидку"})])
+    llm = ScriptedLLM([call_tool("handoff_to_admin", {"reason": "Клиент просит живого человека"})])
     service = make_service(session_factory, redis, llm, notifier)
 
-    first = await service.handle(message(fake_salon, "Хочу скидку"))
-    second = await service.handle(message(fake_salon, "Ну так что со скидкой?"))
+    first = await service.handle(message(fake_salon, "Позовите живого человека"))
+    second = await service.handle(message(fake_salon, "Ну так что?"))
 
     assert first.handed_off
     assert first.text == HANDOFF_ANSWER

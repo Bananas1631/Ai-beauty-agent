@@ -19,6 +19,7 @@ import structlog
 from beauty_agent.adapters.llm.base import ChatMessage, LLMClient, LLMResponse, Usage
 from beauty_agent.agent.context import ClientProfile, build_messages, maybe_summarize
 from beauty_agent.agent.guardrails import (
+    ADMIN_ANSWER,
     HEALTH_ANSWER,
     INJECTION_ANSWER,
     SAFE_ANSWER,
@@ -151,6 +152,10 @@ class Agent:
             ctx.handoff_reason = "Медицинский вопрос"
             result.handoff_reason = ctx.handoff_reason
             result.text = HEALTH_ANSWER
+        elif verdict is InputVerdict.ADMIN:
+            ctx.handoff_reason = "Жалоба, возврат или скидка"
+            result.handoff_reason = ctx.handoff_reason
+            result.text = ADMIN_ANSWER
         elif verdict is InputVerdict.INJECTION:
             result.text = INJECTION_ANSWER
         elif verdict is InputVerdict.TOO_LONG:

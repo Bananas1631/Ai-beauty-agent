@@ -9,7 +9,7 @@ from tests.agent_helpers import make_context
 from beauty_agent.adapters.crm.fake import FakeCRM
 from beauty_agent.adapters.llm.base import ChatMessage, LLMResponse, ToolSpec
 from beauty_agent.adapters.llm.fake import ScriptedLLM, call_tool, reply
-from beauty_agent.agent.guardrails import HEALTH_ANSWER, INJECTION_ANSWER, SAFE_ANSWER
+from beauty_agent.agent.guardrails import ADMIN_ANSWER, HEALTH_ANSWER, INJECTION_ANSWER, SAFE_ANSWER
 from beauty_agent.agent.loop import HANDOFF_ANSWER, MAX_STEPS, Agent
 from beauty_agent.agent.registry import ToolContext
 from beauty_agent.agent.state import DialogState, Turn
@@ -168,13 +168,13 @@ async def test_llm_unavailable_goes_to_admin(ctx: ToolContext) -> None:
 
 async def test_handoff_tool_stops_the_loop(ctx: ToolContext) -> None:
     llm = ScriptedLLM(
-        [call_tool("handoff_to_admin", {"reason": "Клиент просит скидку"}), reply("не должен вызываться")]
+        [call_tool("handoff_to_admin", {"reason": "Клиент просит живого человека"}), reply("не должен вызываться")]
     )
 
-    result = await agent(llm).run("Дайте скидку!", ctx, DialogState())
+    result = await agent(llm).run("Позовите живого человека", ctx, DialogState())
 
     assert result.text == HANDOFF_ANSWER
-    assert result.handoff_reason == "Клиент просит скидку"
+    assert result.handoff_reason == "Клиент просит живого человека"
     assert len(llm.calls) == 1
 
 
@@ -191,3 +191,13 @@ async def test_long_dialog_is_summarized(ctx: ToolContext) -> None:
     system_prompt = llm.calls[0][0][0].content or ""
     assert "Клиент выбирает маникюр." in system_prompt
     assert "реплика 0" not in str(llm.calls[0][0])
+
+
+async def test_complaint_goes_to_admin_without_llm(ctx: ToolContext) -> None:
+    llm = ScriptedLLM()
+
+    result = await agent(llm).run("Я буду жаловаться в Роспотребнадзор!", ctx, DialogState())
+
+    assert result.text == ADMIN_ANSWER
+    assert result.handoff_reason == "Жалоба, возврат или скидка"
+    assert llm.calls == []

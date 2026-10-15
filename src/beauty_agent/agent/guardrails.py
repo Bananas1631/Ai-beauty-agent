@@ -29,6 +29,10 @@ SAFE_ANSWER = (
     "Не хочу ввести вас в заблуждение — уточню точные данные и вернусь с ответом. "
     "Подскажите, пожалуйста, какая услуга вас интересует?"
 )
+ADMIN_ANSWER = (
+    "Понимаю вас. Такие вопросы решает администратор салона — передаю ему наш диалог, "
+    "он ответит в ближайшее рабочее время."
+)
 
 
 class InputVerdict(StrEnum):
@@ -37,10 +41,11 @@ class InputVerdict(StrEnum):
     TOO_LONG = "too_long"
     INJECTION = "injection"
     HEALTH = "health"
+    ADMIN = "admin"  # жалоба, возврат денег, скидка — решает только человек
 
 
 # Невидимые символы, которыми прячут инструкции от глаз: zero-width, bidi-переключатели
-_INVISIBLE = re.compile("[​-‏‪-‮⁠-⁤﻿]")
+_INVISIBLE = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
 
 # Шаблоны узкие: «напишите правила отмены записи» или «вы теперь до 21?» — обычные вопросы клиентов
 _INJECTION = re.compile(
@@ -62,10 +67,19 @@ _HEALTH = re.compile(
     re.IGNORECASE,
 )
 
+# Жалобы, деньги и скидки модель не решает: обещание скидки или спор о возврате — уже ущерб салону.
+# Код передаёт такие сообщения администратору сам, при любой модели
+_ADMIN_TOPIC = re.compile(
+    r"\b(жалоб|жалова|пожалова|претензи|роспотребнадзор|прокуратур|испорти|изуродова"
+    r"|(верн\w*|возврат\w*)\s+(\w+\s+){0,2}(деньг|предоплат|оплат)|компенсац"
+    r"|скидк|промокод|скинь\w*\s+(до|цену)|бесплатно\s+за\s+рекламу)",
+    re.IGNORECASE,
+)
+
 _FOREIGN_SCRIPT = re.compile(
-    "[֐-ࣿ"  # иврит, арабское письмо
-    "฀-๿"  # тайское
-    "ᄀ-ᇿ぀-ヿ㄰-㆏㐀-䶿一-鿿가-힯豈-﫿]"  # CJK, хангыль
+    "[\u0590-\u08ff"  # иврит, арабское письмо
+    "\u0e00-\u0e7f"  # тайское
+    "\u1100-\u11ff\u3040-\u30ff\u3130-\u318f\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]"  # CJK, хангыль
 )
 
 
@@ -83,6 +97,8 @@ def check_input(text: str) -> InputVerdict:
         return InputVerdict.INJECTION
     if _HEALTH.search(normalized):
         return InputVerdict.HEALTH
+    if _ADMIN_TOPIC.search(normalized):
+        return InputVerdict.ADMIN
     return InputVerdict.OK
 
 
@@ -92,8 +108,8 @@ def has_foreign_script(text: str) -> bool:
 
 # ---------------------------------------------------------------- сверка фактов
 
-_SPACE_IN_NUMBER = re.compile(r"(?<=\d)[\s  ](?=\d{3}(?!\d))")
-_PRICE = re.compile(r"(\d[\d\s  ]*)(?:[.,]\d{1,2})?\s*(?:₽|руб|р\.|rub)", re.IGNORECASE)
+_SPACE_IN_NUMBER = re.compile(r"(?<=\d)[\s\u00a0\u202f](?=\d{3}(?!\d))")
+_PRICE = re.compile(r"(\d[\d\s\u00a0\u202f]*)(?:[.,]\d{1,2})?\s*(?:₽|руб|р\.|rub)", re.IGNORECASE)
 _TIME = re.compile(r"(?<![\d:])([01]?\d|2[0-3])[:.]([0-5]\d)(?![\d:])")
 _NUMBER = re.compile(r"\d+")
 

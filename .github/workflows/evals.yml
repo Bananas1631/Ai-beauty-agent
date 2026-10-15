@@ -1,0 +1,79 @@
+# Evals в CI: качество агента измеряется на каждом изменении агента, RAG, LLM-клиентов или датасетов.
+#
+# - PR: быстрый набор — по 20 сценариев записи и провокаций;
+# - каждую ночь и вручную: полный прогон booking/v2 + attacks/v1.
+# Нарушение порогов evals/thresholds.toml — красный статус: при защите main он блокирует слияние.
+#
+# Модель и судья — переменные репозитория EVAL_MODEL (например qwen3-235b) и EVAL_JUDGE.
+# Без них — офлайн-модель и судья на правилах: инварианты проверяются всё равно.
+# Ключи LLM — секреты; в PR из форков секретов нет, поэтому там evals не запускаются.
+name: Evals
+
+on:
+  pull_request:
+    paths:
+      - "src/beauty_agent/agent/**"
+      - "src/beauty_agent/rag/**"
+      - "src/beauty_agent/adapters/llm/**"
+      - "src/beauty_agent/domain/booking_engine/**"
+      - "evals/**"
+  schedule:
+    - cron: "0 23 * * *"  # 02:00 МСК
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  POETRY_VERSION: "2.5.1"
+
+jobs:
+  evals:
+    name: Evals gate
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      LLM_CLOUDRU_API_KEY: ${{ secrets.LLM_CLOUDRU_API_KEY }}
+      LLM_YANDEX_API_KEY: ${{ secrets.LLM_YANDEX_API_KEY }}
+      LLM_YANDEX_FOLDER_ID: ${{ secrets.LLM_YANDEX_FOLDER_ID }}
+      LLM_GIGACHAT_AUTH_KEY: ${{ secrets.LLM_GIGACHAT_AUTH_KEY }}
+      EVAL_MODEL: ${{ vars.EVAL_MODEL || 'offline' }}
+      EVAL_JUDGE: ${{ vars.EVAL_JUDGE || 'rules' }}
+      EVAL_LIMIT: ${{ github.event_name == 'pull_request' && '20' || '0' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Poetry
+        run: pipx install "poetry==${POETRY_VERSION}"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: poetry
+      - name: Install dependencies
+        run: poetry install --no-interaction
+      - name: Run evals
+        run: >-
+          poetry run python -m evals.run
+          --dataset booking/v2,attacks/v1
+          --models "$EVAL_MODEL"
+          --judge "$EVAL_JUDGE"
+          --limit "$EVAL_LIMIT"
+          --no-report
+          --output evals-report.json
+      - name: Quality gate
+        run: poetry run python -m evals.gate --report evals-report.json --baseline evals/reports/baseline.json
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: evals-report
+          path: evals-report.json
+          if-no-files-found: ignore
+          retention-days: 30
