@@ -1,0 +1,30 @@
+{"id": "lav-01", "site": "lavanda", "question": "Сколько стоит маникюр с покрытием Shellac?", "expect": {"page": "prices.html", "phrase": "Shellac — от 2 500"}}
+{"id": "lav-02", "site": "lavanda", "question": "Есть ли у вас парковка?", "expect": {"page": "contacts.html", "phrase": "парковка"}}
+{"id": "lav-03", "site": "lavanda", "question": "Можно оплатить по СБП?", "expect": {"page": "contacts.html", "phrase": "СБП"}}
+{"id": "lav-04", "site": "lavanda", "question": "За сколько можно отменить запись?", "expect": {"page": "rules.html", "phrase": "24 часа"}}
+{"id": "lav-05", "site": "lavanda", "question": "Что будет, если я опоздаю?", "expect": {"page": "rules.html", "phrase": "15 минут"}}
+{"id": "lav-06", "site": "lavanda", "question": "Как подготовиться к ламинированию ресниц?", "expect": {"page": "care.html", "phrase": "без туши"}}
+{"id": "lav-07", "site": "lavanda", "question": "Сколько держится покрытие на ногтях?", "expect": {"page": "care.html", "phrase": "2–3 недели"}}
+{"id": "lav-08", "site": "lavanda", "question": "Каким гель-лаком вы работаете?", "expect": {"page": "", "phrase": "Kodi"}}
+{"id": "lav-09", "site": "lavanda", "question": "Продаёте подарочные сертификаты?", "expect": {"page": "prices.html", "phrase": "Сертификат"}}
+{"id": "lav-10", "site": "lavanda", "question": "Нужна ли предоплата за наращивание ресниц?", "expect": {"page": "rules.html", "phrase": "30%"}}
+{"id": "bor-01", "site": "boroda", "question": "Сколько стоит стрижка бороды?", "expect": {"page": "prices.html", "phrase": "Моделирование бороды"}}
+{"id": "bor-02", "site": "boroda", "question": "Вы стрижёте детей?", "expect": {"page": "faq.html", "phrase": "мальчиков от 4 лет"}}
+{"id": "bor-03", "site": "boroda", "question": "До скольки вы работаете?", "expect": {"page": "contacts.html", "phrase": "22:00"}}
+{"id": "bor-04", "site": "boroda", "question": "Какое ближайшее метро?", "expect": {"page": "contacts.html", "phrase": "Площадь Ильича"}}
+{"id": "bor-05", "site": "boroda", "question": "Есть ли бонусы для постоянных клиентов?", "expect": {"page": "", "phrase": "шестая стрижка"}}
+{"id": "bor-06", "site": "boroda", "question": "Какой косметикой вы укладываете волосы?", "expect": {"page": "faq.html", "phrase": "Reuzel"}}
+{"id": "bor-07", "site": "boroda", "question": "Сколько стоит закрасить седину?", "expect": {"page": "prices.html", "phrase": "Камуфляж седины"}}
+{"id": "bor-08", "site": "boroda", "question": "Можно купить сертификат онлайн?", "expect": {"page": "faq.html", "phrase": "электронный сертификат"}}
+{"id": "bor-09", "site": "boroda", "question": "Делаете бритьё с горячим полотенцем?", "expect": {"page": "prices.html", "phrase": "Королевское бритьё"}}
+{"id": "bor-10", "site": "boroda", "question": "Можно оставить чаевые мастеру?", "expect": {"page": "contacts.html", "phrase": "чаевые"}}
+{"id": "iri-01", "site": "iris", "question": "Как вы стерилизуете инструменты?", "expect": {"page": "safety.html", "phrase": "сухожаре"}}
+{"id": "iri-02", "site": "iris", "question": "Пилки у вас одноразовые?", "expect": {"page": "safety.html", "phrase": "одноразовые"}}
+{"id": "iri-03", "site": "iris", "question": "Что делать, если покрытие сколось?", "expect": {"page": "guarantee.html", "phrase": "исправим бесплатно"}}
+{"id": "iri-04", "site": "iris", "question": "Сколько действует гарантия на покрытие?", "expect": {"page": "guarantee.html", "phrase": "7 дней"}}
+{"id": "iri-05", "site": "iris", "question": "Сколько стоит френч?", "expect": {"page": "prices.html", "phrase": "Френч — 700"}}
+{"id": "iri-06", "site": "iris", "question": "Какая цена аппаратного педикюра?", "expect": {"page": "prices.html", "phrase": "2 600"}}
+{"id": "iri-07", "site": "iris", "question": "Где находится студия?", "expect": {"page": "contacts.html", "phrase": "Садовая"}}
+{"id": "iri-08", "site": "iris", "question": "Работаете ли вы в выходные?", "expect": {"page": "contacts.html", "phrase": "без выходных"}}
+{"id": "iri-09", "site": "iris", "question": "Сколько стоит укрепление ногтей?", "expect": {"page": "prices.html", "phrase": "Укрепление базой"}}
+{"id": "iri-10", "site": "iris", "question": "Как часто ваши мастера учатся?", "expect": {"page": "", "phrase": "каждые полгода"}}

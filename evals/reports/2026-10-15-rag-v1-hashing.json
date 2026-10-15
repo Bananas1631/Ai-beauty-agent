@@ -1,0 +1,919 @@
+{
+  "embedder": "hashing",
+  "questions": 30,
+  "recall_at_5": 1.0,
+  "mrr": 0.9167,
+  "results": [
+    {
+      "id": "lav-01",
+      "question": "Сколько стоит маникюр с покрытием Shellac?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://lavanda.example/prices.html",
+          "title": "Цены — Ногтевой сервис",
+          "score": 0.03279
+        },
+        {
+          "url": "https://lavanda.example/",
+          "title": "О студии — О студии",
+          "score": 0.03226
+        },
+        {
+          "url": "https://lavanda.example/care.html",
+          "title": "Подготовка и уход — Перед ламинированием ресниц",
+          "score": 0.03175
+        },
+        {
+          "url": "https://lavanda.example/contacts.html",
+          "title": "Контакты — Контакты",
+          "score": 0.01562
+        },
+        {
+          "url": "https://lavanda.example/rules.html",
+          "title": "Правила записи — Отмена и перенос",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "lav-02",
+      "question": "Есть ли у вас парковка?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://lavanda.example/contacts.html",
+          "title": "Контакты — Контакты",
+          "score": 0.03279
+        },
+        {
+          "url": "https://lavanda.example/care.html",
+          "title": "Подготовка и уход — Перед ламинированием ресниц",
+          "score": 0.01613
+        },
+        {
+          "url": "https://lavanda.example/",
+          "title": "О студии — О студии",
+          "score": 0.01587
+        },
+        {
+          "url": "https://lavanda.example/prices.html",
+          "title": "Цены — Ногтевой сервис",
+          "score": 0.01562
+        },
+        {
+          "url": "https://lavanda.example/rules.html",
+          "title": "Правила записи — Отмена и перенос",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "lav-03",
+      "question": "Можно оплатить по СБП?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://lavanda.example/contacts.html",
+          "title": "Контакты — Контакты",
+          "score": 0.03279
+        },
+        {
+          "url": "https://lavanda.example/rules.html",
+          "title": "Правила записи — Отмена и перенос",
+          "score": 0.01613
+        },
+        {
+          "url": "https://lavanda.example/prices.html",
+          "title": "Цены — Ногтевой сервис",
+          "score": 0.01587
+        },
+        {
+          "url": "https://lavanda.example/care.html",
+          "title": "Подготовка и уход — Перед ламинированием ресниц",
+          "score": 0.01562
+        },
+        {
+          "url": "https://lavanda.example/",
+          "title": "О студии — О студии",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "lav-04",
+      "question": "За сколько можно отменить запись?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://lavanda.example/rules.html",
+          "title": "Правила записи — Отмена и перенос",
+          "score": 0.03279
+        },
+        {
+          "url": "https://lavanda.example/care.html",
+          "title": "Подготовка и уход — Перед ламинированием ресниц",
+          "score": 0.01613
+        },
+        {
+          "url": "https://lavanda.example/prices.html",
+          "title": "Цены — Ногтевой сервис",
+          "score": 0.01587
+        },
+        {
+          "url": "https://lavanda.example/contacts.html",
+          "title": "Контакты — Контакты",
+          "score": 0.01562
+        },
+        {
+          "url": "https://lavanda.example/",
+          "title": "О студии — О студии",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "lav-05",
+      "question": "Что будет, если я опоздаю?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://lavanda.example/rules.html",
+          "title": "Правила записи — Отмена и перенос",
+          "score": 0.01639
+        },
+        {
+          "url": "https://lavanda.example/care.html",
+          "title": "Подготовка и уход — Перед ламинированием ресниц",
+          "score": 0.01613
+        },
+        {
+          "url": "https://lavanda.example/contacts.html",
+          "title": "Контакты — Контакты",
+          "score": 0.01587
+        },
+        {
+          "url": "https://lavanda.example/",
+          "title": "О студии — О студии",
+          "score": 0.01562
+        },
+        {
+          "url": "https://lavanda.example/prices.html",
+          "title": "Цены — Ногтевой сервис",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "lav-06",
+      "question": "Как подготовиться к ламинированию ресниц?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://lavanda.example/care.html",
+          "title": "Подготовка и уход — Перед ламинированием ресниц",
+          "score": 0.03279
+        },
+        {
+          "url": "https://lavanda.example/",
+          "title": "О студии — О студии",
+          "score": 0.03226
+        },
+        {
+          "url": "https://lavanda.example/prices.html",
+          "title": "Цены — Ногтевой сервис",
+          "score": 0.03175
+        },
+        {
+          "url": "https://lavanda.example/rules.html",
+          "title": "Правила записи — Отмена и перенос",
+          "score": 0.03125
+        },
+        {
+          "url": "https://lavanda.example/contacts.html",
+          "title": "Контакты — Контакты",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "lav-07",
+      "question": "Сколько держится покрытие на ногтях?",
+      "rank": 2,
+      "top": [
+        {
+          "url": "https://lavanda.example/prices.html",
+          "title": "Цены — Ногтевой сервис",
+          "score": 0.03279
+        },
+        {
+          "url": "https://lavanda.example/care.html",
+          "title": "Подготовка и уход — Перед ламинированием ресниц",
+          "score": 0.03226
+        },
+        {
+          "url": "https://lavanda.example/",
+          "title": "О студии — О студии",
+          "score": 0.03126
+        },
+        {
+          "url": "https://lavanda.example/rules.html",
+          "title": "Правила записи — Отмена и перенос",
+          "score": 0.01587
+        },
+        {
+          "url": "https://lavanda.example/contacts.html",
+          "title": "Контакты — Контакты",
+          "score": 0.01562
+        }
+      ]
+    },
+    {
+      "id": "lav-08",
+      "question": "Каким гель-лаком вы работаете?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://lavanda.example/",
+          "title": "О студии — О студии",
+          "score": 0.03279
+        },
+        {
+          "url": "https://lavanda.example/contacts.html",
+          "title": "Контакты — Контакты",
+          "score": 0.01613
+        },
+        {
+          "url": "https://lavanda.example/rules.html",
+          "title": "Правила записи — Отмена и перенос",
+          "score": 0.01587
+        },
+        {
+          "url": "https://lavanda.example/care.html",
+          "title": "Подготовка и уход — Перед ламинированием ресниц",
+          "score": 0.01562
+        },
+        {
+          "url": "https://lavanda.example/prices.html",
+          "title": "Цены — Ногтевой сервис",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "lav-09",
+      "question": "Продаёте подарочные сертификаты?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://lavanda.example/prices.html",
+          "title": "Цены — Ногтевой сервис",
+          "score": 0.03227
+        },
+        {
+          "url": "https://lavanda.example/care.html",
+          "title": "Подготовка и уход — Перед ламинированием ресниц",
+          "score": 0.01639
+        },
+        {
+          "url": "https://lavanda.example/contacts.html",
+          "title": "Контакты — Контакты",
+          "score": 0.01613
+        },
+        {
+          "url": "https://lavanda.example/rules.html",
+          "title": "Правила записи — Отмена и перенос",
+          "score": 0.01562
+        },
+        {
+          "url": "https://lavanda.example/",
+          "title": "О студии — О студии",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "lav-10",
+      "question": "Нужна ли предоплата за наращивание ресниц?",
+      "rank": 2,
+      "top": [
+        {
+          "url": "https://lavanda.example/care.html",
+          "title": "Подготовка и уход — Перед ламинированием ресниц",
+          "score": 0.03252
+        },
+        {
+          "url": "https://lavanda.example/rules.html",
+          "title": "Правила записи — Отмена и перенос",
+          "score": 0.03252
+        },
+        {
+          "url": "https://lavanda.example/",
+          "title": "О студии — О студии",
+          "score": 0.03175
+        },
+        {
+          "url": "https://lavanda.example/prices.html",
+          "title": "Цены — Ногтевой сервис",
+          "score": 0.03125
+        },
+        {
+          "url": "https://lavanda.example/contacts.html",
+          "title": "Контакты — Контакты",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "bor-01",
+      "question": "Сколько стоит стрижка бороды?",
+      "rank": 2,
+      "top": [
+        {
+          "url": "https://boroda.example/",
+          "title": "Мужские стрижки — Мужские стрижки",
+          "score": 0.03279
+        },
+        {
+          "url": "https://boroda.example/prices.html",
+          "title": "Прайс — Прайс",
+          "score": 0.03226
+        },
+        {
+          "url": "https://boroda.example/faq.html",
+          "title": "Частые вопросы — Можно ли прийти с ребёнком?",
+          "score": 0.03175
+        },
+        {
+          "url": "https://boroda.example/contacts.html",
+          "title": "Где мы — Где мы",
+          "score": 0.01562
+        }
+      ]
+    },
+    {
+      "id": "bor-02",
+      "question": "Вы стрижёте детей?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://boroda.example/faq.html",
+          "title": "Частые вопросы — Можно ли прийти с ребёнком?",
+          "score": 0.03227
+        },
+        {
+          "url": "https://boroda.example/",
+          "title": "Мужские стрижки — Мужские стрижки",
+          "score": 0.01639
+        },
+        {
+          "url": "https://boroda.example/prices.html",
+          "title": "Прайс — Прайс",
+          "score": 0.01613
+        },
+        {
+          "url": "https://boroda.example/contacts.html",
+          "title": "Где мы — Где мы",
+          "score": 0.01562
+        }
+      ]
+    },
+    {
+      "id": "bor-03",
+      "question": "До скольки вы работаете?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://boroda.example/contacts.html",
+          "title": "Где мы — Где мы",
+          "score": 0.03279
+        },
+        {
+          "url": "https://boroda.example/prices.html",
+          "title": "Прайс — Прайс",
+          "score": 0.01613
+        },
+        {
+          "url": "https://boroda.example/faq.html",
+          "title": "Частые вопросы — Можно ли прийти с ребёнком?",
+          "score": 0.01587
+        },
+        {
+          "url": "https://boroda.example/",
+          "title": "Мужские стрижки — Мужские стрижки",
+          "score": 0.01562
+        }
+      ]
+    },
+    {
+      "id": "bor-04",
+      "question": "Какое ближайшее метро?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://boroda.example/contacts.html",
+          "title": "Где мы — Где мы",
+          "score": 0.03279
+        },
+        {
+          "url": "https://boroda.example/faq.html",
+          "title": "Частые вопросы — Можно ли прийти с ребёнком?",
+          "score": 0.01613
+        },
+        {
+          "url": "https://boroda.example/",
+          "title": "Мужские стрижки — Мужские стрижки",
+          "score": 0.01587
+        },
+        {
+          "url": "https://boroda.example/prices.html",
+          "title": "Прайс — Прайс",
+          "score": 0.01562
+        }
+      ]
+    },
+    {
+      "id": "bor-05",
+      "question": "Есть ли бонусы для постоянных клиентов?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://boroda.example/",
+          "title": "Мужские стрижки — Мужские стрижки",
+          "score": 0.03252
+        },
+        {
+          "url": "https://boroda.example/faq.html",
+          "title": "Частые вопросы — Можно ли прийти с ребёнком?",
+          "score": 0.01639
+        },
+        {
+          "url": "https://boroda.example/contacts.html",
+          "title": "Где мы — Где мы",
+          "score": 0.01587
+        },
+        {
+          "url": "https://boroda.example/prices.html",
+          "title": "Прайс — Прайс",
+          "score": 0.01562
+        }
+      ]
+    },
+    {
+      "id": "bor-06",
+      "question": "Какой косметикой вы укладываете волосы?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://boroda.example/faq.html",
+          "title": "Частые вопросы — Можно ли прийти с ребёнком?",
+          "score": 0.01639
+        },
+        {
+          "url": "https://boroda.example/contacts.html",
+          "title": "Где мы — Где мы",
+          "score": 0.01613
+        },
+        {
+          "url": "https://boroda.example/prices.html",
+          "title": "Прайс — Прайс",
+          "score": 0.01587
+        },
+        {
+          "url": "https://boroda.example/",
+          "title": "Мужские стрижки — Мужские стрижки",
+          "score": 0.01562
+        }
+      ]
+    },
+    {
+      "id": "bor-07",
+      "question": "Сколько стоит закрасить седину?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://boroda.example/prices.html",
+          "title": "Прайс — Прайс",
+          "score": 0.03279
+        },
+        {
+          "url": "https://boroda.example/contacts.html",
+          "title": "Где мы — Где мы",
+          "score": 0.01613
+        },
+        {
+          "url": "https://boroda.example/faq.html",
+          "title": "Частые вопросы — Можно ли прийти с ребёнком?",
+          "score": 0.01587
+        },
+        {
+          "url": "https://boroda.example/",
+          "title": "Мужские стрижки — Мужские стрижки",
+          "score": 0.01562
+        }
+      ]
+    },
+    {
+      "id": "bor-08",
+      "question": "Можно купить сертификат онлайн?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://boroda.example/faq.html",
+          "title": "Частые вопросы — Можно ли прийти с ребёнком?",
+          "score": 0.03279
+        },
+        {
+          "url": "https://boroda.example/contacts.html",
+          "title": "Где мы — Где мы",
+          "score": 0.01613
+        },
+        {
+          "url": "https://boroda.example/",
+          "title": "Мужские стрижки — Мужские стрижки",
+          "score": 0.01587
+        },
+        {
+          "url": "https://boroda.example/prices.html",
+          "title": "Прайс — Прайс",
+          "score": 0.01562
+        }
+      ]
+    },
+    {
+      "id": "bor-09",
+      "question": "Делаете бритьё с горячим полотенцем?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://boroda.example/prices.html",
+          "title": "Прайс — Прайс",
+          "score": 0.03279
+        },
+        {
+          "url": "https://boroda.example/contacts.html",
+          "title": "Где мы — Где мы",
+          "score": 0.01613
+        },
+        {
+          "url": "https://boroda.example/faq.html",
+          "title": "Частые вопросы — Можно ли прийти с ребёнком?",
+          "score": 0.01587
+        },
+        {
+          "url": "https://boroda.example/",
+          "title": "Мужские стрижки — Мужские стрижки",
+          "score": 0.01562
+        }
+      ]
+    },
+    {
+      "id": "bor-10",
+      "question": "Можно оставить чаевые мастеру?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://boroda.example/contacts.html",
+          "title": "Где мы — Где мы",
+          "score": 0.03252
+        },
+        {
+          "url": "https://boroda.example/faq.html",
+          "title": "Частые вопросы — Можно ли прийти с ребёнком?",
+          "score": 0.01639
+        },
+        {
+          "url": "https://boroda.example/prices.html",
+          "title": "Прайс — Прайс",
+          "score": 0.01587
+        },
+        {
+          "url": "https://boroda.example/",
+          "title": "Мужские стрижки — Мужские стрижки",
+          "score": 0.01562
+        }
+      ]
+    },
+    {
+      "id": "iri-01",
+      "question": "Как вы стерилизуете инструменты?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://iris.example/safety.html",
+          "title": "Стерильность — Стерильность",
+          "score": 0.03279
+        },
+        {
+          "url": "https://iris.example/guarantee.html",
+          "title": "Гарантия на покрытие — Гарантия на покрытие",
+          "score": 0.01613
+        },
+        {
+          "url": "https://iris.example/",
+          "title": "Ногтевая студия — Ногтевая студия",
+          "score": 0.01587
+        },
+        {
+          "url": "https://iris.example/prices.html",
+          "title": "Стоимость услуг — Стоимость услуг",
+          "score": 0.01562
+        },
+        {
+          "url": "https://iris.example/contacts.html",
+          "title": "Контакты студии — Контакты студии",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "iri-02",
+      "question": "Пилки у вас одноразовые?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://iris.example/safety.html",
+          "title": "Стерильность — Стерильность",
+          "score": 0.03279
+        },
+        {
+          "url": "https://iris.example/",
+          "title": "Ногтевая студия — Ногтевая студия",
+          "score": 0.01613
+        },
+        {
+          "url": "https://iris.example/contacts.html",
+          "title": "Контакты студии — Контакты студии",
+          "score": 0.01587
+        },
+        {
+          "url": "https://iris.example/guarantee.html",
+          "title": "Гарантия на покрытие — Гарантия на покрытие",
+          "score": 0.01562
+        },
+        {
+          "url": "https://iris.example/prices.html",
+          "title": "Стоимость услуг — Стоимость услуг",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "iri-03",
+      "question": "Что делать, если покрытие сколось?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://iris.example/guarantee.html",
+          "title": "Гарантия на покрытие — Гарантия на покрытие",
+          "score": 0.03279
+        },
+        {
+          "url": "https://iris.example/prices.html",
+          "title": "Стоимость услуг — Стоимость услуг",
+          "score": 0.03226
+        },
+        {
+          "url": "https://iris.example/contacts.html",
+          "title": "Контакты студии — Контакты студии",
+          "score": 0.01587
+        },
+        {
+          "url": "https://iris.example/",
+          "title": "Ногтевая студия — Ногтевая студия",
+          "score": 0.01562
+        },
+        {
+          "url": "https://iris.example/safety.html",
+          "title": "Стерильность — Стерильность",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "iri-04",
+      "question": "Сколько действует гарантия на покрытие?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://iris.example/guarantee.html",
+          "title": "Гарантия на покрытие — Гарантия на покрытие",
+          "score": 0.03279
+        },
+        {
+          "url": "https://iris.example/prices.html",
+          "title": "Стоимость услуг — Стоимость услуг",
+          "score": 0.03226
+        },
+        {
+          "url": "https://iris.example/",
+          "title": "Ногтевая студия — Ногтевая студия",
+          "score": 0.01587
+        },
+        {
+          "url": "https://iris.example/contacts.html",
+          "title": "Контакты студии — Контакты студии",
+          "score": 0.01562
+        },
+        {
+          "url": "https://iris.example/safety.html",
+          "title": "Стерильность — Стерильность",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "iri-05",
+      "question": "Сколько стоит френч?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://iris.example/prices.html",
+          "title": "Стоимость услуг — Стоимость услуг",
+          "score": 0.03279
+        },
+        {
+          "url": "https://iris.example/contacts.html",
+          "title": "Контакты студии — Контакты студии",
+          "score": 0.01613
+        },
+        {
+          "url": "https://iris.example/guarantee.html",
+          "title": "Гарантия на покрытие — Гарантия на покрытие",
+          "score": 0.01587
+        },
+        {
+          "url": "https://iris.example/",
+          "title": "Ногтевая студия — Ногтевая студия",
+          "score": 0.01562
+        },
+        {
+          "url": "https://iris.example/safety.html",
+          "title": "Стерильность — Стерильность",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "iri-06",
+      "question": "Какая цена аппаратного педикюра?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://iris.example/prices.html",
+          "title": "Стоимость услуг — Стоимость услуг",
+          "score": 0.03279
+        },
+        {
+          "url": "https://iris.example/",
+          "title": "Ногтевая студия — Ногтевая студия",
+          "score": 0.03226
+        },
+        {
+          "url": "https://iris.example/contacts.html",
+          "title": "Контакты студии — Контакты студии",
+          "score": 0.01587
+        },
+        {
+          "url": "https://iris.example/guarantee.html",
+          "title": "Гарантия на покрытие — Гарантия на покрытие",
+          "score": 0.01562
+        },
+        {
+          "url": "https://iris.example/safety.html",
+          "title": "Стерильность — Стерильность",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "iri-07",
+      "question": "Где находится студия?",
+      "rank": 2,
+      "top": [
+        {
+          "url": "https://iris.example/",
+          "title": "Ногтевая студия — Ногтевая студия",
+          "score": 0.03279
+        },
+        {
+          "url": "https://iris.example/contacts.html",
+          "title": "Контакты студии — Контакты студии",
+          "score": 0.03226
+        },
+        {
+          "url": "https://iris.example/safety.html",
+          "title": "Стерильность — Стерильность",
+          "score": 0.01587
+        },
+        {
+          "url": "https://iris.example/guarantee.html",
+          "title": "Гарантия на покрытие — Гарантия на покрытие",
+          "score": 0.01562
+        },
+        {
+          "url": "https://iris.example/prices.html",
+          "title": "Стоимость услуг — Стоимость услуг",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "iri-08",
+      "question": "Работаете ли вы в выходные?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://iris.example/contacts.html",
+          "title": "Контакты студии — Контакты студии",
+          "score": 0.03279
+        },
+        {
+          "url": "https://iris.example/safety.html",
+          "title": "Стерильность — Стерильность",
+          "score": 0.01613
+        },
+        {
+          "url": "https://iris.example/guarantee.html",
+          "title": "Гарантия на покрытие — Гарантия на покрытие",
+          "score": 0.01587
+        },
+        {
+          "url": "https://iris.example/",
+          "title": "Ногтевая студия — Ногтевая студия",
+          "score": 0.01562
+        },
+        {
+          "url": "https://iris.example/prices.html",
+          "title": "Стоимость услуг — Стоимость услуг",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "iri-09",
+      "question": "Сколько стоит укрепление ногтей?",
+      "rank": 2,
+      "top": [
+        {
+          "url": "https://iris.example/",
+          "title": "Ногтевая студия — Ногтевая студия",
+          "score": 0.03279
+        },
+        {
+          "url": "https://iris.example/prices.html",
+          "title": "Стоимость услуг — Стоимость услуг",
+          "score": 0.03226
+        },
+        {
+          "url": "https://iris.example/contacts.html",
+          "title": "Контакты студии — Контакты студии",
+          "score": 0.01587
+        },
+        {
+          "url": "https://iris.example/guarantee.html",
+          "title": "Гарантия на покрытие — Гарантия на покрытие",
+          "score": 0.01562
+        },
+        {
+          "url": "https://iris.example/safety.html",
+          "title": "Стерильность — Стерильность",
+          "score": 0.01538
+        }
+      ]
+    },
+    {
+      "id": "iri-10",
+      "question": "Как часто ваши мастера учатся?",
+      "rank": 1,
+      "top": [
+        {
+          "url": "https://iris.example/",
+          "title": "Ногтевая студия — Ногтевая студия",
+          "score": 0.03279
+        },
+        {
+          "url": "https://iris.example/contacts.html",
+          "title": "Контакты студии — Контакты студии",
+          "score": 0.01613
+        },
+        {
+          "url": "https://iris.example/guarantee.html",
+          "title": "Гарантия на покрытие — Гарантия на покрытие",
+          "score": 0.01587
+        },
+        {
+          "url": "https://iris.example/prices.html",
+          "title": "Стоимость услуг — Стоимость услуг",
+          "score": 0.01562
+        },
+        {
+          "url": "https://iris.example/safety.html",
+          "title": "Стерильность — Стерильность",
+          "score": 0.01538
+        }
+      ]
+    }
+  ],
+  "started_at": "2026-10-15T21:15:08+00:00"
+}

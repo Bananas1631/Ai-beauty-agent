@@ -79,6 +79,7 @@ def _default_prices() -> dict[str, tuple[Decimal, Decimal]]:
         "yandexgpt-pro": (Decimal("1.20"), Decimal("1.20")),
         "gigachat-2-lite": (Decimal("0.20"), Decimal("0.20")),
         "gigachat-2-max": (Decimal("1.95"), Decimal("1.95")),
+        "bge-m3": (Decimal("0.01"), Decimal(0)),
     }
 
 
@@ -108,6 +109,9 @@ class LLMSettings(EnvSection):
     gigachat_ca_bundle: str | None = None
     gigachat_lite_model: str = "GigaChat-2"
     gigachat_max_model: str = "GigaChat-2-Max"
+    # Эмбеддинги для RAG — в Cloud.ru (OpenAI-совместимый /embeddings); без ключа — офлайн-хеширование.
+    # Смена модели требует переиндексации: векторы разных моделей несравнимы
+    embeddings_model: str = "BAAI/bge-m3"
     # Цены переопределяются JSON-ом: LLM_PRICES='{"qwen3-235b": [0.05, 0.2]}'
     prices: dict[str, tuple[Decimal, Decimal]] = Field(default_factory=_default_prices)
     # Порядок по умолчанию: основная модель, затем резервные. Салон может задать свой

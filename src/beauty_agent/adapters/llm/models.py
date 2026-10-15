@@ -15,6 +15,7 @@ from beauty_agent.adapters.llm.base import FREE, LLMClient, ModelPrice
 from beauty_agent.adapters.llm.gigachat import GigaChatClient
 from beauty_agent.adapters.llm.openai_compat import OpenAICompatClient
 from beauty_agent.core.config import LLMSettings
+from beauty_agent.rag.embeddings import EmbeddingsClient, HashingEmbeddings, OpenAICompatEmbeddings
 
 
 def price_of(settings: LLMSettings, key: str) -> ModelPrice:
@@ -71,3 +72,17 @@ def build_clients(settings: LLMSettings) -> dict[str, LLMClient]:
             timeout_s=settings.timeout_s,
         )
     return clients
+
+
+def build_embedder(settings: LLMSettings) -> EmbeddingsClient:
+    """Облачные эмбеддинги при ключе Cloud.ru, иначе офлайн-хеширование (демо, тесты, CI)."""
+    if settings.cloudru_api_key is None:
+        return HashingEmbeddings()
+    return OpenAICompatEmbeddings(
+        model_key="bge-m3",
+        model=settings.embeddings_model,
+        base_url=settings.cloudru_base_url,
+        api_key=settings.cloudru_api_key.get_secret_value(),
+        price=price_of(settings, "bge-m3"),
+        timeout_s=settings.timeout_s,
+    )

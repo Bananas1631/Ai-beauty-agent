@@ -23,7 +23,7 @@ from beauty_agent.agent.registry import ToolContext
 from beauty_agent.agent.router import build_router
 from beauty_agent.agent.state import StateStore
 from beauty_agent.agent.tools import default_registry
-from beauty_agent.catalog.lookup import DbCatalog, KnowledgeSalonInfo
+from beauty_agent.catalog.lookup import DbCatalog
 from beauty_agent.conversation.notifications import AdminEvent, AdminEventKind, Notifier
 from beauty_agent.core.redis import RedisLock, key
 from beauty_agent.db.models import Conversation, Salon
@@ -32,6 +32,8 @@ from beauty_agent.db.repositories.clients import ClientsRepository
 from beauty_agent.db.repositories.conversations import ConversationsRepository
 from beauty_agent.domain.booking_engine.service import BookingService
 from beauty_agent.domain.enums import Channel, ConversationStatus, MessageRole
+from beauty_agent.rag.embeddings import EmbeddingsClient, HashingEmbeddings
+from beauty_agent.rag.retriever import HybridRetriever, RagSalonInfo
 
 logger = structlog.get_logger(__name__)
 
@@ -70,6 +72,7 @@ class ConversationService:
         default_models: list[str],
         notifier: Notifier,
         fallback_llm: LLMClient | None = None,
+        embedder: EmbeddingsClient | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.session_factory = session_factory
@@ -79,6 +82,7 @@ class ConversationService:
         self.default_models = default_models
         self.fallback_llm = fallback_llm
         self.notifier = notifier
+        self.embedder = embedder or HashingEmbeddings()
         self.clock = clock or (lambda: datetime.now(UTC))
         self.states = StateStore(redis)
         self.budget = DailyBudget(redis)
@@ -135,7 +139,7 @@ class ConversationService:
             now=self.clock().astimezone(ZoneInfo(salon.timezone)),
             booking=booking,
             catalog=DbCatalog(session, salon.id),
-            salon_info=KnowledgeSalonInfo(session, salon.id),
+            salon_info=RagSalonInfo(HybridRetriever(session, salon.id, self.embedder)),
             client_id=client.id,
         )
         try:

@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from beauty_agent import __version__
 from beauty_agent.adapters.crm.factory import ProviderRegistry
-from beauty_agent.adapters.llm.models import build_clients
+from beauty_agent.adapters.llm.models import build_clients, build_embedder
 from beauty_agent.adapters.llm.offline import OfflineLLM
 from beauty_agent.api import health, pages, v1, widget_ws
 from beauty_agent.api.errors import install_error_handlers
@@ -56,6 +56,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             notifier=LogNotifier(),
             # Без ключей LLM вне прода отвечает офлайн-модель: демо и проверка работают сразу
             fallback_llm=None if settings.app.env == "prod" else OfflineLLM(),
+            embedder=build_embedder(settings.llm),
         )
         try:
             yield

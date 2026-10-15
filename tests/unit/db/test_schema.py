@@ -49,6 +49,7 @@ def test_all_tables_are_registered() -> None:
         "messages",
         "tool_calls",
         "knowledge_items",
+        "knowledge_chunks",
         "consents",
     }
 

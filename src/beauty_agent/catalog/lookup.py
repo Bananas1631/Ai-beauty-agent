@@ -6,10 +6,9 @@
 
 import uuid
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from beauty_agent.db.models import KnowledgeItem, Service
+from beauty_agent.db.models import Service
 from beauty_agent.db.repositories.catalog import MastersRepository, ServicesRepository
 from beauty_agent.domain.entities import MasterInfo, ServiceInfo
 
@@ -41,20 +40,3 @@ class DbCatalog:
             MasterInfo(master.external_id, master.name, master.specialization, frozenset({service_id}))
             for master in await self.masters_repo.for_service(service.id)
         ]
-
-
-class KnowledgeSalonInfo:
-    """Сведения о салоне из базы знаний: пока — карточка филиала; с 3 ноября — гибридный поиск."""
-
-    def __init__(self, session: AsyncSession, salon_id: uuid.UUID) -> None:
-        self.session = session
-        self.salon_id = salon_id
-
-    async def search(self, question: str) -> list[dict[str, str]]:
-        statement = (
-            select(KnowledgeItem)
-            .where(KnowledgeItem.salon_id == self.salon_id)
-            .order_by(KnowledgeItem.created_at)
-            .limit(3)
-        )
-        return [{"title": item.title, "text": item.content[:1200]} for item in await self.session.scalars(statement)]

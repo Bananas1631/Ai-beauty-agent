@@ -9,7 +9,7 @@ from beauty_agent.db.models.catalog import Master, MasterService, Service
 from beauty_agent.db.models.client import Client, ClientIdentity
 from beauty_agent.db.models.consent import Consent
 from beauty_agent.db.models.conversation import Conversation, Message, ToolCall
-from beauty_agent.db.models.knowledge import KnowledgeItem
+from beauty_agent.db.models.knowledge import KnowledgeChunk, KnowledgeItem
 from beauty_agent.db.models.salon import ChannelAccount, Salon
 
 __all__ = [
@@ -20,6 +20,7 @@ __all__ = [
     "ClientIdentity",
     "Consent",
     "Conversation",
+    "KnowledgeChunk",
     "KnowledgeItem",
     "Master",
     "MasterService",

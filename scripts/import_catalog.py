@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from beauty_agent.adapters.crm.base import BookingProvider
 from beauty_agent.adapters.crm.fake import FakeCRM
 from beauty_agent.adapters.crm.yclients import YclientsProvider
+from beauty_agent.adapters.llm.models import build_embedder
 from beauty_agent.catalog.importer import ImportReport, import_catalog
 from beauty_agent.core.config import Settings, get_settings
 from beauty_agent.core.db import make_engine, make_session_factory
@@ -53,6 +54,7 @@ async def run(args: argparse.Namespace, settings: Settings) -> ImportReport:
                 company_id=None if args.fake else args.company_id,
                 is_demo=args.demo,
                 dry_run=args.dry_run,
+                embedder=build_embedder(settings.llm),
             )
     finally:
         if yclients is not None:

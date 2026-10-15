@@ -19,6 +19,8 @@ from beauty_agent.db.repositories.catalog import MasterServicesRepository, Maste
 from beauty_agent.db.repositories.salons import SalonsRepository
 from beauty_agent.domain.entities import SalonInfo
 from beauty_agent.domain.enums import KnowledgeSource
+from beauty_agent.rag.embeddings import EmbeddingsClient
+from beauty_agent.rag.ingest import index_text
 
 logger = structlog.get_logger(__name__)
 
@@ -81,8 +83,22 @@ async def _upsert_salon(
     return salon, created
 
 
-async def _upsert_salon_card(session: AsyncSession, salon_id: uuid.UUID, info: SalonInfo) -> None:
+async def _upsert_salon_card(
+    session: AsyncSession, salon_id: uuid.UUID, info: SalonInfo, embedder: EmbeddingsClient | None
+) -> None:
+    """Карточка филиала — документ базы знаний. С эмбеддером — сразу с фрагментами для поиска."""
     content = salon_card_text(info)
+    if embedder is not None:
+        await index_text(
+            session,
+            salon_id,
+            embedder,
+            source=KnowledgeSource.CRM,
+            url=f"crm:company/{info.external_id}",
+            title=f"Карточка салона «{info.name}»",
+            text=content,
+        )
+        return
     values = {
         "source": KnowledgeSource.CRM,
         "title": f"Карточка салона «{info.name}»"[:500],
@@ -105,7 +121,10 @@ async def import_catalog(
     company_id: int | None = None,
     is_demo: bool = False,
     dry_run: bool = False,
+    embedder: EmbeddingsClient | None = None,
 ) -> ImportReport:
+    """Импорт каталога. embedder — тот же, что у поиска (adapters/llm/models.build_embedder):
+    векторы разных моделей несравнимы. Без него карточка сохраняется без фрагментов."""
     report = ImportReport(dry_run=dry_run)
     info = await provider.get_salon_info()
     services = await provider.list_services()
@@ -121,7 +140,7 @@ async def import_catalog(
             session, info, company_id=company_id, slug=slug, is_demo=is_demo
         )
         report.salon_id = salon.id
-        await _upsert_salon_card(session, salon.id, info)
+        await _upsert_salon_card(session, salon.id, info, embedder)
 
         services_repo = ServicesRepository(session, salon.id)
         saved_services = await services_repo.upsert(services)
