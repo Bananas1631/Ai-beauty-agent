@@ -81,8 +81,12 @@ class YclientsSettings(EnvSection):
     model_config = SettingsConfigDict(env_prefix="YCLIENTS_")
 
     base_url: str = "https://api.yclients.ru/api/v1"
-    partner_token: SecretStr = SecretStr("")
+    partner_token: SecretStr | None = None  # публичные методы онлайн-записи
+    user_token: SecretStr | None = None  # закрытые методы: поиск записи после таймаута
+    accept: str = "application/vnd.yclients.v2+json"
     timeout_s: float = 10.0
+    requests_per_second: float = 5.0  # лимит YCLIENTS с одного IP
+    max_search_days: int = 3  # дней с окнами на один поиск: каждый день × мастер — отдельный запрос
 
 
 class Settings(BaseModel):
