@@ -157,3 +157,9 @@ def test_slot_properties(working: list[Interval], busy: list[Interval], duration
         assert (start - BASE) % GRID == timedelta(0)  # кратно шагу сетки
         assert start >= not_before
     assert starts == sorted(set(starts))  # по возрастанию, без повторов
+
+
+def test_empty_interval_overlaps_nothing() -> None:
+    assert not iv(at(10, 1), at(10, 1)).overlaps(iv(at(10), at(10, 15)))
+    assert iv(at(10), at(11)).overlaps(iv(at(10, 30), at(12)))
+    assert not iv(at(10), at(11)).overlaps(iv(at(11), at(12)))  # вплотную — не пересекаются

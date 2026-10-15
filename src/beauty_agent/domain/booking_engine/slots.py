@@ -35,6 +35,9 @@ class Interval:
         return self.end - self.start
 
     def overlaps(self, other: "Interval") -> bool:
+        """Есть ли общее время. Пустой интервал [10:00, 10:00) не занимает времени и ни с чем не пересекается."""
+        if self.start == self.end or other.start == other.end:
+            return False
         return self.start < other.end and other.start < self.end
 
 
