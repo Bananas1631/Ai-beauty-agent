@@ -12,9 +12,12 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from beauty_agent.domain.errors import ProviderUnavailableError
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
 
 Clock = Callable[[], float]
 Sleep = Callable[[float], Awaitable[None]]
@@ -120,3 +123,58 @@ class CircuitBreaker:
         self._failures += 1
         if self._failures >= self.failure_threshold:
             self._opened_at = self._clock()
+
+
+# ---------------------------------------------------------------- общий лимит в Redis
+
+# Ведро токенов на все процессы: время берётся из Redis (TIME), а не из часов процесса, —
+# у воркеров на разных машинах часы расходятся. Число возвращается строкой: Redis округлил бы
+# дробь из Lua до целого.
+_BUCKET_SCRIPT = """
+local rate = tonumber(ARGV[1])
+local capacity = tonumber(ARGV[2])
+local time = redis.call('TIME')
+local now = tonumber(time[1]) + tonumber(time[2]) / 1000000
+local state = redis.call('HMGET', KEYS[1], 'tokens', 'ts')
+local tokens = tonumber(state[1]) or capacity
+local updated = tonumber(state[2]) or now
+tokens = math.min(capacity, tokens + math.max(0, now - updated) * rate)
+local wait = 0
+if tokens >= 1 then
+    tokens = tokens - 1
+else
+    wait = (1 - tokens) / rate
+end
+redis.call('HSET', KEYS[1], 'tokens', tostring(tokens), 'ts', tostring(now))
+redis.call('EXPIRE', KEYS[1], 60)
+return tostring(wait)
+"""
+
+
+class RedisTokenBucket:
+    """Ограничитель частоты, общий для API и всех воркеров Celery (лимит YCLIENTS — на IP сервера)."""
+
+    def __init__(
+        self,
+        redis: "Redis",
+        name: str,
+        rate: float,
+        capacity: float | None = None,
+        *,
+        sleep: Sleep = asyncio.sleep,
+    ) -> None:
+        if rate <= 0:
+            raise ValueError("rate должен быть положительным")
+        self.redis = redis
+        self.name = name
+        self.rate = rate
+        self.capacity = capacity if capacity is not None else rate
+        self._sleep = sleep
+
+    async def try_acquire(self) -> float:
+        raw = await self.redis.eval(_BUCKET_SCRIPT, 1, self.name, str(self.rate), str(self.capacity))
+        return float(raw)
+
+    async def acquire(self) -> None:
+        while (wait := await self.try_acquire()) > 0:
+            await self._sleep(min(wait, 1.0))

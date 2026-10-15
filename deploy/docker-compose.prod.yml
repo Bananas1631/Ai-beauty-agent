@@ -1,7 +1,7 @@
-# Контейнеры на сервере: api, postgres, redis и Caddy (вход из интернета с HTTPS).
+# Контейнеры на сервере: api, воркеры Celery, postgres, redis, rabbitmq и Caddy (вход из интернета с HTTPS).
 # Лежит на сервере в /opt/beauty-agent рядом с .env и Caddyfile; обновляет его деплой из CI.
 #   docker compose -f docker-compose.prod.yml up -d
-# В отличие от локального compose: порты баз наружу не открыты, секреты — только из .env,
+# В отличие от локального compose: порты баз и брокера наружу не открыты, секреты — только из .env,
 # у логов ротация (по умолчанию Docker пишет логи без ограничений, и диск заполняется).
 name: beauty-agent
 
@@ -18,7 +18,7 @@ x-hardening: &hardening
   logging: *logging
 
 services:
-  api:
+  api: &app
     <<: *hardening
     image: "${APP_IMAGE:?APP_IMAGE не задан — ghcr.io/<owner>/<repo>:<sha>}"
     env_file: .env
@@ -26,6 +26,7 @@ services:
       APP_ENV: prod
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
       # api доступен только из внутренней сети Docker через Caddy, поэтому X-Forwarded-For
       # от Caddy можно доверять: по нему считаются лимиты частоты на IP
       FORWARDED_ALLOW_IPS: "*"
@@ -41,6 +42,26 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  # Воркер Celery из того же образа: входящие сообщения мессенджеров и фоновые задачи
+  worker:
+    <<: *app
+    expose: []
+    command: ["celery", "-A", "beauty_agent.workers.celery_app", "worker", "-Q", "messages,periodic",
+              "--concurrency", "4", "--loglevel", "INFO"]
+    healthcheck:
+      disable: true
+
+  # Расписание фоновых задач; файл расписания — во временной папке (контейнер только для чтения)
+  beat:
+    <<: *app
+    expose: []
+    command: ["celery", "-A", "beauty_agent.workers.celery_app", "beat", "--loglevel", "INFO",
+              "--schedule", "/tmp/celerybeat-schedule"]
+    healthcheck:
+      disable: true
 
   postgres:
     <<: *hardening
@@ -75,6 +96,23 @@ services:
       timeout: 3s
       retries: 10
 
+  rabbitmq:
+    <<: *hardening
+    image: rabbitmq:4-alpine
+    # RabbitMQ хранит данные в папке с именем узла, а оно строится из hostname
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?RABBITMQ_USER не задан}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD не задан}
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
   caddy:
     <<: *hardening
     image: caddy:2-alpine
@@ -95,5 +133,6 @@ services:
 volumes:
   pgdata:
   redisdata:
+  rabbitmqdata:
   caddy_data:
   caddy_config:

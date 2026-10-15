@@ -99,3 +99,40 @@ def test_failed_probe_opens_again() -> None:
     assert state(breaker) is CircuitState.OPEN
     time.now = 60
     assert state(breaker) is CircuitState.HALF_OPEN
+
+
+async def test_redis_bucket_is_shared_between_instances() -> None:
+    from fakeredis import FakeAsyncRedis
+
+    from beauty_agent.core.resilience import RedisTokenBucket
+
+    redis = FakeAsyncRedis(decode_responses=True)
+    first = RedisTokenBucket(redis, "ba:test:rps", rate=2)
+    second = RedisTokenBucket(redis, "ba:test:rps", rate=2)  # другой процесс, тот же ключ
+
+    assert await first.try_acquire() == 0
+    assert await second.try_acquire() == 0
+    assert await first.try_acquire() > 0  # третий запрос в ту же секунду ждёт: лимит общий
+    await redis.aclose()
+
+
+async def test_redis_bucket_waits_until_token() -> None:
+    from fakeredis import FakeAsyncRedis
+
+    from beauty_agent.core.resilience import RedisTokenBucket
+
+    redis = FakeAsyncRedis(decode_responses=True)
+    waits: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        waits.append(seconds)
+        await redis.hset("ba:test:rps2", "tokens", "1")  # «прошло время»: токен появился
+
+    bucket = RedisTokenBucket(redis, "ba:test:rps2", rate=1, sleep=fake_sleep)
+    await bucket.acquire()
+    await bucket.acquire()
+
+    assert len(waits) == 1
+    with pytest.raises(ValueError, match="положительным"):
+        RedisTokenBucket(redis, "x", rate=0)
+    await redis.aclose()

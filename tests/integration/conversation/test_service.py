@@ -107,7 +107,8 @@ async def test_handoff_stops_the_agent(
     assert first.handed_off
     assert first.text == HANDOFF_ANSWER
     assert second.text == HANDED_OFF_ANSWER  # администратор ведёт диалог — агент молчит
-    assert [event.kind for event in notifier.events] == [AdminEventKind.HANDOFF]
+    # первое — передача диалога, второе — новое сообщение клиента пересылается администратору
+    assert [event.kind for event in notifier.events] == [AdminEventKind.HANDOFF, AdminEventKind.CLIENT_MESSAGE]
     conversation = await session.get(Conversation, first.conversation_id)
     assert conversation is not None
     await session.refresh(conversation)

@@ -15,6 +15,9 @@ class AdminEventKind(StrEnum):
     HANDOFF = "handoff"
     BOOKING_PENDING = "booking_pending"
     BUDGET_EXCEEDED = "budget_exceeded"
+    CLIENT_MESSAGE = "client_message"  # клиент пишет в диалог, который ведёт администратор
+    UNSUPPORTED_MESSAGE = "unsupported_message"  # голосовое, стикер, файл
+    DEAD_LETTER = "dead_letter"  # сообщение не обработано после всех повторов
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,7 +25,7 @@ class AdminEvent:
     kind: AdminEventKind
     salon_id: str
     conversation_id: str | None
-    text: str  # без ПДн клиента: администратор откроет диалог по ссылке
+    text: str  # для администратора салона; в логах телефоны и e-mail маскируются
 
 
 class Notifier(Protocol):

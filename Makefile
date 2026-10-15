@@ -5,7 +5,7 @@ RUN := poetry run
 COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
 
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test audit migrate-check check up down ps logs migrate chat evals seed
+.PHONY: help install lint format typecheck test audit migrate-check check up down ps logs migrate chat evals seed worker
 
 help:
 	@echo make install   - install dependencies and git hooks
@@ -24,6 +24,7 @@ help:
 	@echo make chat      - chat with the agent in the terminal on the fake CRM
 	@echo make evals     - run evals, MODELS=offline,qwen3-235b DATASET=booking/v1
 	@echo make seed      - demo salon from the fake CRM: /s/demo-lavanda
+	@echo make worker    - Celery worker locally, without Docker
 
 install:
 	poetry install
@@ -80,3 +81,7 @@ evals:
 
 seed:
 	$(RUN) python -m scripts.seed_demo
+
+# --pool=solo: на Windows prefork Celery не работает
+worker:
+	$(RUN) celery -A beauty_agent.workers.celery_app worker -Q messages,periodic --pool=solo --loglevel=INFO

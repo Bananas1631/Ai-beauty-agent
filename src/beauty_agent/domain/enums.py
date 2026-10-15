@@ -60,3 +60,12 @@ class CrmKind(StrEnum):
     YCLIENTS = auto()
     DEMO = auto()  # реальные слоты YCLIENTS, но запись только имитируется
     FAKE = auto()  # фейковый CRM: make seed и проверка без доступа к YCLIENTS
+
+
+class OutboxStatus(StrEnum):
+    """Исходящее сообщение в мессенджер."""
+
+    PENDING = auto()  # ждёт отправки
+    SENDING = auto()  # взято воркером; если воркер упал, блокировка истечёт и сообщение вернётся в работу
+    SENT = auto()
+    FAILED = auto()  # мессенджер отказал окончательно: клиент заблокировал бота, чат удалён

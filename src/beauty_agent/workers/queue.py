@@ -1,0 +1,14 @@
+"""Постановка задач из async-кода. Публикация в RabbitMQ — блокирующий вызов kombu,
+поэтому он идёт в пуле потоков: иначе вебхук остановил бы цикл событий всего API."""
+
+import asyncio
+import uuid
+
+
+class CeleryQueue:
+    async def schedule(self, account_id: uuid.UUID, chat_id: str, token: str, *, delay_s: float) -> None:
+        from beauty_agent.workers.messages import process_batch_task
+
+        await asyncio.to_thread(
+            process_batch_task.apply_async, args=[str(account_id), chat_id, token], countdown=delay_s
+        )

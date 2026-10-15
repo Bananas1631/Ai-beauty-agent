@@ -7,6 +7,7 @@
 from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -156,16 +157,57 @@ class LangfuseSettings(EnvSection):
         return bool(self.public_key and self.secret_key)
 
 
+class RabbitMQSettings(EnvSection):
+    """Брокер очереди Celery: входящие сообщения мессенджеров, напоминания, ночные задачи."""
+
+    model_config = SettingsConfigDict(env_prefix="RABBITMQ_")
+
+    host: str = "localhost"
+    port: int = 5672
+    user: str = "beauty"
+    password: SecretStr = SecretStr("beauty")
+    vhost: str = "/"
+
+    @property
+    def url(self) -> str:
+        """amqp://… — логин, пароль и vhost экранируются: «p@ss/word» не ломает адрес."""
+        user = quote(self.user, safe="")
+        password = quote(self.password.get_secret_value(), safe="")
+        return f"amqp://{user}:{password}@{self.host}:{self.port}/{quote(self.vhost, safe='')}"
+
+
+class SecuritySettings(EnvSection):
+    """Ключи шифрования токенов каналов, подписи вебхуков и JWT для API инбокса.
+
+    В проде обязательны (проверяет create_app). Локально, если не заданы, используются
+    известные dev-ключи: ими нельзя шифровать настоящие токены.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="SECURITY_")
+
+    # Ключи Fernet через запятую: первый шифрует, остальные только расшифровывают (ротация ключа)
+    fernet_keys: SecretStr | None = None
+    webhook_key: SecretStr | None = None  # из него выводится secret_token вебхука каждого канала
+    jwt_secret: SecretStr | None = None
+    jwt_ttl_s: int = 8 * 3600
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.fernet_keys and self.webhook_key and self.jwt_secret)
+
+
 class Settings(BaseModel):
     """Все секции вместе. Каждая секция читает свои переменные при создании."""
 
     app: AppSettings = Field(default_factory=AppSettings)
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
+    rabbitmq: RabbitMQSettings = Field(default_factory=RabbitMQSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     yclients: YclientsSettings = Field(default_factory=YclientsSettings)
     sentry: SentrySettings = Field(default_factory=SentrySettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
 
 
 @lru_cache

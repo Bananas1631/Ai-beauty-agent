@@ -1,14 +1,19 @@
-"""Сервис диалога — единая точка входа для веб-чата, а с ноября и для мессенджеров.
+"""Сервис диалога — единая точка входа для веб-чата и мессенджеров.
 
 Принимает сообщение, находит или создаёт клиента по ClientIdentity и диалог, запускает агента
 и сохраняет ответ с токенами и стоимостью. Одно сообщение диалога обрабатывается за раз
 (блокировка в Redis): второе ждёт первое, иначе агент ответил бы дважды на одно и то же.
+
+Для мессенджеров ответ не отправляется отсюда, а записывается в outbox в той же транзакции,
+что и сообщение агента: отправку делает воркер, и повтор задачи не даст второго ответа.
 """
 
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from decimal import Decimal
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import structlog
@@ -25,9 +30,10 @@ from beauty_agent.agent.state import StateStore
 from beauty_agent.agent.tools import default_registry
 from beauty_agent.catalog.lookup import DbCatalog
 from beauty_agent.conversation.notifications import AdminEvent, AdminEventKind, Notifier
+from beauty_agent.conversation.outbox import enqueue_outbound, outbox_key
 from beauty_agent.core.redis import RedisLock, key
 from beauty_agent.core.tracing import NoopTracer, Tracer
-from beauty_agent.db.models import Conversation, Salon
+from beauty_agent.db.models import Salon
 from beauty_agent.db.repositories.bookings import SqlBookingLedger
 from beauty_agent.db.repositories.clients import ClientsRepository
 from beauty_agent.db.repositories.conversations import ConversationsRepository
@@ -44,6 +50,15 @@ LOCK_WAIT_S = 60.0
 
 
 @dataclass(frozen=True, slots=True)
+class ReplyRoute:
+    """Куда отправить ответ в мессенджер: аккаунт канала салона и чат клиента."""
+
+    account_id: uuid.UUID
+    chat_id: str
+    route: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
 class IncomingMessage:
     salon: Salon
     channel: Channel
@@ -51,6 +66,7 @@ class IncomingMessage:
     text: str
     external_message_id: str | None = None  # ID сообщения в канале: защита от повторного вебхука
     client_name: str | None = None
+    reply_to: ReplyRoute | None = None  # мессенджеры: ответ уходит через outbox
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +76,7 @@ class Reply:
     handed_off: bool = False
     duplicate: bool = False
     result: AgentResult | None = None
+    outbox_key: str | None = None  # что доставить воркеру; при повторе задачи — тот же ключ
 
 
 class ConversationService:
@@ -102,6 +119,48 @@ class ConversationService:
             await session.commit()
         return reply
 
+    @staticmethod
+    def _outbox_key(message: IncomingMessage) -> str | None:
+        if message.reply_to is None:
+            return None
+        return outbox_key(
+            message.channel,
+            message.reply_to.account_id,
+            message.reply_to.chat_id,
+            message.external_message_id or uuid.uuid4().hex,
+        )
+
+    async def _answer(
+        self,
+        session: AsyncSession,
+        conversations: ConversationsRepository,
+        conversation_id: uuid.UUID,
+        message: IncomingMessage,
+        text: str,
+        *,
+        tokens_in: int | None = None,
+        tokens_out: int | None = None,
+        cost_rub: Decimal | None = None,
+    ) -> str | None:
+        """Сохраняет ответ агента и, для мессенджера, строку outbox — одной транзакцией."""
+        await conversations.add_message(
+            conversation_id, MessageRole.AGENT, text, tokens_in=tokens_in, tokens_out=tokens_out, cost_rub=cost_rub
+        )
+        delivery_key = self._outbox_key(message)
+        if delivery_key and message.reply_to:
+            await enqueue_outbound(
+                session,
+                salon_id=message.salon.id,
+                account_id=message.reply_to.account_id,
+                conversation_id=conversation_id,
+                channel=message.channel,
+                chat_id=message.reply_to.chat_id,
+                route=message.reply_to.route,
+                text=text,
+                dedupe_key=delivery_key,
+            )
+        return delivery_key
+
     async def _handle(self, session: AsyncSession, message: IncomingMessage) -> Reply:
         salon = message.salon
         clients = ClientsRepository(session, salon.id)
@@ -115,54 +174,59 @@ class ConversationService:
             str(salon.id), str(conversation_id), restore=lambda: conversations.restore_state(conversation_id)
         )
         stored = await conversations.add_message(
-            conversation.id, MessageRole.CLIENT, message.text, external_id=message.external_message_id
+            conversation_id, MessageRole.CLIENT, message.text, external_id=message.external_message_id
         )
         if stored is None:
-            return Reply(None, conversation.id, duplicate=True)
+            # Повтор вебхука или задачи: ответ уже сохранён — воркер доставит его, если не успел
+            return Reply(None, conversation_id, duplicate=True, outbox_key=self._outbox_key(message))
         if conversation.status is ConversationStatus.HANDED_OFF:
-            return Reply(HANDED_OFF_ANSWER, conversation.id, handed_off=True)
+            await self.notifier.notify(
+                AdminEvent(AdminEventKind.CLIENT_MESSAGE, str(salon.id), str(conversation_id), message.text)
+            )
+            return Reply(HANDED_OFF_ANSWER, conversation_id, handed_off=True)
 
         config = salon.config
         if await self.budget.exceeded(str(salon.id), config.daily_llm_budget_rub):
-            return await self._budget_exceeded(conversations, conversation, salon)
+            return await self._budget_exceeded(session, conversations, conversation_id, message)
 
-        provider = self.providers.for_salon(salon)
-        booking = BookingService(
-            salon_id=str(salon.id),
-            timezone=salon.timezone,
-            provider=provider,
-            redis=self.redis,
-            ledger=SqlBookingLedger(session, salon.id),
-        )
-        profile = await clients.profile(client)
-        ctx = ToolContext(
-            salon_id=str(salon.id),
-            salon_name=salon.name,
-            conversation_id=str(conversation.id),
-            now=self.clock().astimezone(ZoneInfo(salon.timezone)),
-            booking=booking,
-            catalog=DbCatalog(session, salon.id),
-            salon_info=RagSalonInfo(HybridRetriever(session, salon.id, self.embedder)),
-            client_id=client.id,
-        )
         try:
             router = build_router(
                 self.llm_clients, config.llm_models or self.default_models, fallback=self.fallback_llm
             )
         except ValueError:  # ни одной настроенной модели — отвечает администратор
             logger.error("no_llm_configured", salon_id=str(salon.id))
-            await conversations.add_message(conversation.id, MessageRole.AGENT, HANDOFF_ANSWER)
-            await conversations.set_status(conversation.id, ConversationStatus.HANDED_OFF)
+            delivery_key = await self._answer(session, conversations, conversation_id, message, HANDOFF_ANSWER)
+            await conversations.set_status(conversation_id, ConversationStatus.HANDED_OFF)
             await self.notifier.notify(
-                AdminEvent(AdminEventKind.HANDOFF, str(salon.id), str(conversation.id), "Не настроена ни одна LLM")
+                AdminEvent(AdminEventKind.HANDOFF, str(salon.id), str(conversation_id), "Не настроена ни одна LLM")
             )
-            return Reply(HANDOFF_ANSWER, conversation.id, handed_off=True)
-        agent = Agent(router, default_registry(), prompt_version=config.prompt_version, tracer=self.tracer)
-        result = await agent.run(message.text, ctx, state, profile=profile)
+            return Reply(HANDOFF_ANSWER, conversation_id, handed_off=True, outbox_key=delivery_key)
 
-        await conversations.add_message(
+        booking = BookingService(
+            salon_id=str(salon.id),
+            timezone=salon.timezone,
+            provider=self.providers.for_salon(salon),
+            redis=self.redis,
+            ledger=SqlBookingLedger(session, salon.id),
+        )
+        ctx = ToolContext(
+            salon_id=str(salon.id),
+            salon_name=salon.name,
+            conversation_id=str(conversation_id),
+            now=self.clock().astimezone(ZoneInfo(salon.timezone)),
+            booking=booking,
+            catalog=DbCatalog(session, salon.id),
+            salon_info=RagSalonInfo(HybridRetriever(session, salon.id, self.embedder)),
+            client_id=client.id,
+        )
+        agent = Agent(router, default_registry(), prompt_version=config.prompt_version, tracer=self.tracer)
+        result = await agent.run(message.text, ctx, state, profile=await clients.profile(client))
+
+        delivery_key = await self._answer(
+            session,
+            conversations,
             conversation_id,
-            MessageRole.AGENT,
+            message,
             result.text,
             tokens_in=result.usage.prompt_tokens,
             tokens_out=result.usage.completion_tokens,
@@ -186,21 +250,26 @@ class ConversationService:
                     "CRM недоступна: подтвердите запись вручную",
                 )
             )
-        return Reply(result.text, conversation_id, handed_off=result.handed_off, result=result)
+        return Reply(result.text, conversation_id, handed_off=result.handed_off, result=result, outbox_key=delivery_key)
 
     async def _budget_exceeded(
-        self, conversations: ConversationsRepository, conversation: Conversation, salon: Salon
+        self,
+        session: AsyncSession,
+        conversations: ConversationsRepository,
+        conversation_id: uuid.UUID,
+        message: IncomingMessage,
     ) -> Reply:
+        salon = message.salon
         logger.warning("llm_budget_exceeded", salon_id=str(salon.id))
-        await conversations.add_message(conversation.id, MessageRole.AGENT, BUDGET_EXCEEDED_ANSWER)
-        await conversations.set_status(conversation.id, ConversationStatus.HANDED_OFF)
+        delivery_key = await self._answer(session, conversations, conversation_id, message, BUDGET_EXCEEDED_ANSWER)
+        await conversations.set_status(conversation_id, ConversationStatus.HANDED_OFF)
         if await self.budget.first_alert_today(str(salon.id)):
             await self.notifier.notify(
                 AdminEvent(
                     AdminEventKind.BUDGET_EXCEEDED,
                     str(salon.id),
-                    str(conversation.id),
+                    str(conversation_id),
                     f"Дневной лимит расходов на LLM ({salon.config.daily_llm_budget_rub} ₽) исчерпан",
                 )
             )
-        return Reply(BUDGET_EXCEEDED_ANSWER, conversation.id, handed_off=True)
+        return Reply(BUDGET_EXCEEDED_ANSWER, conversation_id, handed_off=True, outbox_key=delivery_key)

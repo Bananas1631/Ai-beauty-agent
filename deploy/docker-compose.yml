@@ -4,24 +4,53 @@
 name: beauty-agent
 
 services:
-  api:
+  api: &app
     build:
       context: ..
       dockerfile: deploy/Dockerfile
     env_file: ../.env
-    environment:
+    environment: &app-env
       # Внутри сети Docker сервис находится по имени, а не по localhost
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
     ports:
       - "127.0.0.1:8000:8000"
-    depends_on:
+    depends_on: &app-deps
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+
+  # Воркер Celery из того же образа: входящие сообщения мессенджеров и фоновые задачи
+  worker:
+    <<: *app
+    ports: []
+    command: ["celery", "-A", "beauty_agent.workers.celery_app", "worker", "-Q", "messages,periodic",
+              "--concurrency", "2", "--loglevel", "INFO"]
+    healthcheck:
+      disable: true
+
+  # Расписание фоновых задач: напоминания, хранение данных, синхронизация каталога
+  beat:
+    <<: *app
+    ports: []
+    command: ["celery", "-A", "beauty_agent.workers.celery_app", "beat", "--loglevel", "INFO",
+              "--schedule", "/tmp/celerybeat-schedule"]
+    healthcheck:
+      disable: true
+
+  # Только локально: Telegram через long polling (вебхуку нужен публичный HTTPS).
+  # Запуск: docker compose -f deploy/docker-compose.yml --profile telegram up -d
+  bot:
+    <<: *app
+    ports: []
+    profiles: ["telegram"]
+    command: ["python", "-m", "beauty_agent.workers.telegram_polling"]
+    healthcheck:
+      disable: true
 
   postgres:
     image: pgvector/pgvector:pg17

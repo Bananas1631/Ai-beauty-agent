@@ -13,21 +13,14 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from beauty_agent import __version__
-from beauty_agent.adapters.crm.factory import ProviderRegistry
-from beauty_agent.adapters.llm.models import build_clients, build_embedder
-from beauty_agent.adapters.llm.offline import OfflineLLM
 from beauty_agent.api import health, pages, v1, widget_ws
 from beauty_agent.api.errors import install_error_handlers
 from beauty_agent.api.middleware import TraceIdMiddleware
 from beauty_agent.api.security import SecurityHeadersMiddleware
-from beauty_agent.conversation.notifications import LogNotifier
-from beauty_agent.conversation.service import ConversationService
 from beauty_agent.core.config import Settings, get_settings
-from beauty_agent.core.db import make_engine, make_session_factory
 from beauty_agent.core.logging import configure_logging
-from beauty_agent.core.redis import make_redis
 from beauty_agent.core.sentry import init_sentry
-from beauty_agent.core.tracing import make_tracer
+from beauty_agent.runtime import create_runtime
 
 STATIC = Path(__file__).parent / "static"
 
@@ -40,38 +33,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        engine = make_engine(settings.postgres)
-        redis = make_redis(settings.redis)
-        session_factory = make_session_factory(engine)
-        providers = ProviderRegistry(settings.yclients)
-        llm_clients = build_clients(settings.llm)
-        tracer = make_tracer(settings.langfuse)
-        app.state.engine = engine
-        app.state.session_factory = session_factory
-        app.state.redis = redis
-        app.state.conversations = ConversationService(
-            session_factory=session_factory,
-            redis=redis,
-            providers=providers,
-            llm_clients=llm_clients,
-            default_models=settings.llm.default_models,
-            notifier=LogNotifier(),
-            # Без ключей LLM вне прода отвечает офлайн-модель: демо и проверка работают сразу
-            fallback_llm=None if settings.app.env == "prod" else OfflineLLM(),
-            embedder=build_embedder(settings.llm),
-            tracer=tracer,
-        )
+        from beauty_agent.workers.queue import CeleryQueue  # Celery нужен только для публикации задач
+
+        runtime = create_runtime(settings, queue=CeleryQueue())
+        app.state.runtime = runtime
+        app.state.engine = runtime.engine
+        app.state.session_factory = runtime.session_factory
+        app.state.redis = runtime.redis
+        app.state.security = runtime.security
+        app.state.conversations = runtime.conversations
+        app.state.inbound = runtime.inbound
         try:
             yield
         finally:
-            tracer.flush()  # отправить накопленные трассы до остановки
-            await providers.aclose()
-            for client in llm_clients.values():
-                close = getattr(client, "aclose", None)
-                if close is not None:
-                    await close()
-            await redis.aclose()
-            await engine.dispose()
+            await runtime.close()
 
     docs = settings.app.docs_enabled
     app = FastAPI(

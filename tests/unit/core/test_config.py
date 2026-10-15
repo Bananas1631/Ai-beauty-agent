@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from beauty_agent.core.config import PostgresSettings, get_settings
 
-PREFIXES = ("APP_", "POSTGRES_", "REDIS_", "LLM_", "YCLIENTS_", "SENTRY_", "LANGFUSE_")
+PREFIXES = ("APP_", "POSTGRES_", "REDIS_", "LLM_", "YCLIENTS_", "SENTRY_", "LANGFUSE_", "RABBITMQ_", "SECURITY_")
 
 
 @pytest.fixture(autouse=True)
