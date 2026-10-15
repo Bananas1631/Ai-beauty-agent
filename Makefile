@@ -5,7 +5,7 @@ RUN := poetry run
 COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
 
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test audit migrate-check check up down ps logs migrate chat evals
+.PHONY: help install lint format typecheck test audit migrate-check check up down ps logs migrate chat evals seed
 
 help:
 	@echo make install   - install dependencies and git hooks
@@ -23,6 +23,7 @@ help:
 	@echo make migrate   - apply database migrations
 	@echo make chat      - chat with the agent in the terminal on the fake CRM
 	@echo make evals     - run evals, MODELS=offline,qwen3-235b DATASET=booking/v1
+	@echo make seed      - demo salon from the fake CRM: /s/demo-lavanda
 
 install:
 	poetry install
@@ -76,3 +77,6 @@ DATASET ?= booking/v1
 
 evals:
 	$(RUN) python -m evals.run --dataset $(DATASET) --models $(MODELS)
+
+seed:
+	$(RUN) python -m scripts.seed_demo
