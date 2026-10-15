@@ -58,3 +58,24 @@ class ConfirmationRequiredError(DomainError):
     """CRM требует подтвердить телефон кодом из SMS."""
 
     default_message = "Нужен код подтверждения из SMS"
+
+
+# ---------------------------------------------------------------- LLM
+
+
+class LLMUnavailableError(DomainError):
+    """LLM недоступна: таймаут, 5xx, лимит, ключ отклонён — роутер пробует следующую модель."""
+
+    default_message = "Модель временно недоступна"
+
+
+class LLMBadResponseError(DomainError):
+    """LLM вернула ответ, который нельзя разобрать."""
+
+    default_message = "Модель вернула некорректный ответ"
+
+
+class BudgetExceededError(DomainError):
+    """Дневной лимит расходов салона на LLM исчерпан."""
+
+    default_message = "Дневной лимит расходов на модель исчерпан"

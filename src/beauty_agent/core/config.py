@@ -4,6 +4,7 @@
 Значения берутся из окружения, затем из файла .env; если нет ни там, ни там — значение по умолчанию.
 """
 
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
@@ -68,13 +69,47 @@ class RedisSettings(EnvSection):
     password: SecretStr | None = None
 
 
+def _default_prices() -> dict[str, tuple[Decimal, Decimal]]:
+    """₽ за 1000 токенов (вход, выход) — ориентиры; сверять с прайсами провайдеров перед evals."""
+    return {
+        "qwen3-235b": (Decimal("0.05"), Decimal("0.20")),
+        "yandexgpt-lite": (Decimal("0.20"), Decimal("0.20")),
+        "yandexgpt-pro": (Decimal("1.20"), Decimal("1.20")),
+        "gigachat-2-lite": (Decimal("0.20"), Decimal("0.20")),
+        "gigachat-2-max": (Decimal("1.95"), Decimal("1.95")),
+    }
+
+
 class LLMSettings(EnvSection):
+    """Ключи и модели LLM. Клиент создаётся только для провайдера, у которого задан ключ."""
+
     model_config = SettingsConfigDict(env_prefix="LLM_")
 
+    timeout_s: float = 30.0
+    # Свой OpenAI-совместимый сервер (vLLM, Ollama): модель «custom»
     base_url: str = ""
     api_key: SecretStr = SecretStr("")
     model: str = ""
-    timeout_s: float = 30.0
+    # Cloud.ru Foundation Models: Qwen3-235B
+    cloudru_api_key: SecretStr | None = None
+    cloudru_base_url: str = "https://foundation-models.api.cloud.ru/v1"
+    qwen_model: str = "Qwen/Qwen3-235B-A22B-Instruct-2507"
+    # Yandex AI Studio в OpenAI-совместимом режиме
+    yandex_api_key: SecretStr | None = None
+    yandex_folder_id: str | None = None
+    yandex_base_url: str = "https://llm.api.cloud.yandex.net/v1"
+    yandex_lite_model: str = "yandexgpt-lite/latest"
+    yandex_pro_model: str = "yandexgpt/latest"
+    # GigaChat: ключ авторизации (Basic) и корневой сертификат НУЦ Минцифры
+    gigachat_auth_key: SecretStr | None = None
+    gigachat_scope: str = "GIGACHAT_API_PERS"
+    gigachat_ca_bundle: str | None = None
+    gigachat_lite_model: str = "GigaChat-2"
+    gigachat_max_model: str = "GigaChat-2-Max"
+    # Цены переопределяются JSON-ом: LLM_PRICES='{"qwen3-235b": [0.05, 0.2]}'
+    prices: dict[str, tuple[Decimal, Decimal]] = Field(default_factory=_default_prices)
+    # Порядок по умолчанию: основная модель, затем резервные. Салон может задать свой
+    default_models: list[str] = Field(default_factory=lambda: ["qwen3-235b", "gigachat-2-lite"])
 
 
 class YclientsSettings(EnvSection):
