@@ -17,6 +17,7 @@ from decimal import Decimal
 import structlog
 
 from beauty_agent.adapters.llm.base import ChatMessage, LLMClient, LLMResponse, Usage
+from beauty_agent.adapters.llm.traced import TracedLLM
 from beauty_agent.agent.context import ClientProfile, build_messages, maybe_summarize
 from beauty_agent.agent.guardrails import (
     ADMIN_ANSWER,
@@ -33,6 +34,7 @@ from beauty_agent.agent.guardrails import (
 from beauty_agent.agent.prompts import DEFAULT_PROMPT_VERSION, render_system_prompt
 from beauty_agent.agent.registry import ToolArgumentsError, ToolContext, ToolOutcome, ToolRegistry
 from beauty_agent.agent.state import DialogState
+from beauty_agent.core.tracing import NoopTracer, Tracer, observe, use
 from beauty_agent.domain.errors import LLMBadResponseError, LLMUnavailableError
 
 logger = structlog.get_logger(__name__)
@@ -77,12 +79,15 @@ class Agent:
         prompt_version: str = DEFAULT_PROMPT_VERSION,
         max_steps: int = MAX_STEPS,
         summarizer: LLMClient | None = None,
+        tracer: Tracer | None = None,
     ) -> None:
-        self.llm = llm
+        # Каждый вызов модели — наблюдение generation в трассе: модель, токены, стоимость
+        self.llm = TracedLLM(llm)
         self.registry = registry
         self.prompt_version = prompt_version
         self.max_steps = max_steps
-        self.summarizer = summarizer or llm
+        self.summarizer = TracedLLM(summarizer or llm, name="llm.summary")
+        self.tracer = tracer or NoopTracer()
 
     async def run(
         self,
@@ -95,10 +100,34 @@ class Agent:
     ) -> AgentResult:
         started = time.perf_counter()
         result = AgentResult(text="", prompt_version=self.prompt_version)
+        trace = self.tracer.start_trace(
+            "message",
+            input=user_text,
+            metadata={
+                "salon_id": ctx.salon_id,
+                "conversation_id": ctx.conversation_id,
+                "prompt_version": self.prompt_version,
+            },
+        )
         try:
-            await self._run(user_text, ctx, state, result, profile, knowledge)
+            with use(trace):
+                await self._run(user_text, ctx, state, result, profile, knowledge)
         finally:
             result.latency_ms = int((time.perf_counter() - started) * 1000)
+            trace.update(
+                output=result.text,
+                model=result.model,
+                prompt_tokens=result.usage.prompt_tokens,
+                completion_tokens=result.usage.completion_tokens,
+                cost_rub=result.cost_rub,
+                metadata={
+                    "steps": result.steps,
+                    "handoff_reason": result.handoff_reason,
+                    "guardrail": result.guardrail,
+                    "latency_ms": result.latency_ms,
+                },
+            )
+            trace.end()
         # Текст атаки не сохраняем в историю: иначе он попал бы в контекст следующих сообщений
         remembered = "[сообщение отклонено фильтром]" if result.guardrail == InputVerdict.INJECTION else user_text
         state.remember(remembered, result.text, ctx.facts)
@@ -123,7 +152,9 @@ class Agent:
         profile: ClientProfile | None,
         knowledge: tuple[str, ...],
     ) -> None:
-        verdict = check_input(user_text)
+        with observe("guardrails.input", kind="guardrail", input=user_text) as check:
+            verdict = check_input(user_text)
+            check.update(output=verdict.value)
         if verdict is not InputVerdict.OK:
             self._answer_without_llm(verdict, ctx, result)
             return
@@ -131,8 +162,12 @@ class Agent:
         summary = await maybe_summarize(state, self.summarizer)
         if summary is not None:
             result.add(summary)
-        prompt = render_system_prompt(salon_name=ctx.salon_name, now=ctx.now, version=self.prompt_version)
-        messages = build_messages(prompt, state, user_text, profile=profile, knowledge=knowledge)
+        with observe("context") as context:
+            prompt = render_system_prompt(salon_name=ctx.salon_name, now=ctx.now, version=self.prompt_version)
+            messages = build_messages(prompt, state, user_text, profile=profile, knowledge=knowledge)
+            context.update(
+                output={"messages": len(messages), "facts": len(state.facts), "summary": bool(state.summary)}
+            )
 
         try:
             text = await self._loop(messages, ctx, result)
@@ -144,7 +179,9 @@ class Agent:
             if result.handoff_reason is None:
                 self._handoff(result, ctx, ctx.handoff_reason or "Агент не справился за отведённые шаги")
             return
-        result.text = await self._checked_output(text, messages, ctx, state, result)
+        with observe("guardrails.output", kind="guardrail", input=text) as check:
+            result.text = await self._checked_output(text, messages, ctx, state, result)
+            check.update(output={"text": result.text, "guardrail": result.guardrail})
 
     def _answer_without_llm(self, verdict: InputVerdict, ctx: ToolContext, result: AgentResult) -> None:
         result.guardrail = verdict.value
@@ -189,7 +226,9 @@ class Agent:
                     error = json.dumps({"error": str(exc)}, ensure_ascii=False)
                     messages.append(ChatMessage("tool", error, tool_call_id=call.id, name=call.name))
                     continue
-                outcome = await self.registry.execute(tool, args, call.id, ctx)
+                with observe(f"tool.{tool.name}", kind="tool", input=args.model_dump(mode="json")) as span:
+                    outcome = await self.registry.execute(tool, args, call.id, ctx)
+                    span.update(output=outcome.result, error=outcome.error, metadata={"ms": outcome.duration_ms})
                 result.tool_calls.append(outcome)
                 messages.append(ChatMessage("tool", outcome.content(), tool_call_id=call.id, name=call.name))
             if ctx.handoff_reason is not None:

@@ -140,6 +140,22 @@ class SentrySettings(EnvSection):
     traces_sample_rate: float = 0.0
 
 
+class LangfuseSettings(EnvSection):
+    """Self-hosted Langfuse на сервере в РФ (deploy/docker-compose.langfuse.yml)."""
+
+    model_config = SettingsConfigDict(env_prefix="LANGFUSE_")
+
+    public_key: str | None = None
+    secret_key: SecretStr | None = None
+    host: str = "http://localhost:3000"
+    environment: str = "local"
+    sample_rate: float = 1.0
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.public_key and self.secret_key)
+
+
 class Settings(BaseModel):
     """Все секции вместе. Каждая секция читает свои переменные при создании."""
 
@@ -149,6 +165,7 @@ class Settings(BaseModel):
     llm: LLMSettings = Field(default_factory=LLMSettings)
     yclients: YclientsSettings = Field(default_factory=YclientsSettings)
     sentry: SentrySettings = Field(default_factory=SentrySettings)
+    langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
 
 
 @lru_cache

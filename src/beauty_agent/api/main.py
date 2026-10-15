@@ -27,6 +27,7 @@ from beauty_agent.core.db import make_engine, make_session_factory
 from beauty_agent.core.logging import configure_logging
 from beauty_agent.core.redis import make_redis
 from beauty_agent.core.sentry import init_sentry
+from beauty_agent.core.tracing import make_tracer
 
 STATIC = Path(__file__).parent / "static"
 
@@ -44,6 +45,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session_factory = make_session_factory(engine)
         providers = ProviderRegistry(settings.yclients)
         llm_clients = build_clients(settings.llm)
+        tracer = make_tracer(settings.langfuse)
         app.state.engine = engine
         app.state.session_factory = session_factory
         app.state.redis = redis
@@ -57,10 +59,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Без ключей LLM вне прода отвечает офлайн-модель: демо и проверка работают сразу
             fallback_llm=None if settings.app.env == "prod" else OfflineLLM(),
             embedder=build_embedder(settings.llm),
+            tracer=tracer,
         )
         try:
             yield
         finally:
+            tracer.flush()  # отправить накопленные трассы до остановки
             await providers.aclose()
             for client in llm_clients.values():
                 close = getattr(client, "aclose", None)

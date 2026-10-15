@@ -22,6 +22,7 @@ from redis.asyncio import Redis
 from beauty_agent.adapters.crm.fake import FAKE_SALON, FakeCRM
 from beauty_agent.adapters.llm.base import LLMClient
 from beauty_agent.adapters.llm.models import build_clients
+from beauty_agent.adapters.llm.offline import OfflineLLM
 from beauty_agent.agent.loop import Agent, AgentResult
 from beauty_agent.agent.registry import ToolContext
 from beauty_agent.agent.state import DialogState
@@ -40,13 +41,19 @@ class PrintLedger:
 
 
 def pick_llm(settings: Settings, wanted: str | None) -> LLMClient:
+    """Модель из --model; без него — первая настроенная; без ключей — офлайн-модель на правилах."""
+    if wanted == "offline":
+        return OfflineLLM()
     clients = build_clients(settings.llm)
     order = [wanted] if wanted else [*settings.llm.default_models, *clients]
     for key in order:
         if key in clients:
             return clients[key]
+    if wanted is None:
+        print("Ключей LLM нет — отвечает офлайн-модель на правилах (понимает только типовые фразы).")
+        return OfflineLLM()
     available = ", ".join(clients) or "нет — задайте ключ в .env"
-    raise SystemExit(f"Модель {wanted or 'по умолчанию'} недоступна. Настроены: {available}")
+    raise SystemExit(f"Модель {wanted} недоступна. Настроены: {available}")
 
 
 async def connect_redis(settings: Settings) -> Redis:
@@ -116,7 +123,7 @@ async def chat(args: argparse.Namespace, settings: Settings) -> None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Чат с ИИ-администратором на фейковом CRM")
-    parser.add_argument("--model", help="ключ модели: qwen3-235b, gigachat-2-lite, yandexgpt-lite, custom…")
+    parser.add_argument("--model", help="ключ модели: qwen3-235b, gigachat-2-lite, yandexgpt-lite, custom, offline")
     parser.add_argument("--debug", action="store_true", help="показывать инструменты, токены и стоимость")
     args = parser.parse_args(argv)
     configure_logging("WARNING", json_logs=False)

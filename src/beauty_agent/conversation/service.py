@@ -26,6 +26,7 @@ from beauty_agent.agent.tools import default_registry
 from beauty_agent.catalog.lookup import DbCatalog
 from beauty_agent.conversation.notifications import AdminEvent, AdminEventKind, Notifier
 from beauty_agent.core.redis import RedisLock, key
+from beauty_agent.core.tracing import NoopTracer, Tracer
 from beauty_agent.db.models import Conversation, Salon
 from beauty_agent.db.repositories.bookings import SqlBookingLedger
 from beauty_agent.db.repositories.clients import ClientsRepository
@@ -73,6 +74,7 @@ class ConversationService:
         notifier: Notifier,
         fallback_llm: LLMClient | None = None,
         embedder: EmbeddingsClient | None = None,
+        tracer: Tracer | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.session_factory = session_factory
@@ -83,6 +85,7 @@ class ConversationService:
         self.fallback_llm = fallback_llm
         self.notifier = notifier
         self.embedder = embedder or HashingEmbeddings()
+        self.tracer = tracer or NoopTracer()
         self.clock = clock or (lambda: datetime.now(UTC))
         self.states = StateStore(redis)
         self.budget = DailyBudget(redis)
@@ -154,7 +157,7 @@ class ConversationService:
                 AdminEvent(AdminEventKind.HANDOFF, str(salon.id), str(conversation.id), "Не настроена ни одна LLM")
             )
             return Reply(HANDOFF_ANSWER, conversation.id, handed_off=True)
-        agent = Agent(router, default_registry(), prompt_version=config.prompt_version)
+        agent = Agent(router, default_registry(), prompt_version=config.prompt_version, tracer=self.tracer)
         result = await agent.run(message.text, ctx, state, profile=profile)
 
         await conversations.add_message(

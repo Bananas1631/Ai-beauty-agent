@@ -24,3 +24,4 @@ Thumbs.db
 
 # hypothesis хранит здесь найденные примеры
 .hypothesis/
+deploy/langfuse.env
