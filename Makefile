@@ -5,7 +5,7 @@ RUN := poetry run
 COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
 
 .DEFAULT_GOAL := help
-.PHONY: help install lint format typecheck test audit migrate-check check up down ps logs migrate chat
+.PHONY: help install lint format typecheck test audit migrate-check check up down ps logs migrate chat evals
 
 help:
 	@echo make install   - install dependencies and git hooks
@@ -22,6 +22,7 @@ help:
 	@echo make logs      - follow api logs
 	@echo make migrate   - apply database migrations
 	@echo make chat      - chat with the agent in the terminal on the fake CRM
+	@echo make evals     - run evals, MODELS=offline,qwen3-235b DATASET=booking/v1
 
 install:
 	poetry install
@@ -69,3 +70,9 @@ migrate:
 
 chat:
 	$(RUN) python -m scripts.chat_cli --debug
+
+MODELS ?= offline
+DATASET ?= booking/v1
+
+evals:
+	$(RUN) python -m evals.run --dataset $(DATASET) --models $(MODELS)

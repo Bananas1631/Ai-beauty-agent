@@ -79,7 +79,7 @@ known-first-party = ["beauty_agent", "scripts", "evals"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests", "scripts"]
+files = ["src", "tests", "scripts", "evals"]
 mypy_path = "src,."
 explicit_package_bases = true
 plugins = ["pydantic.mypy"]

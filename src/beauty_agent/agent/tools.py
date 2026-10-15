@@ -79,14 +79,24 @@ def _word_score(token: str, words: list[str]) -> float:
     return best
 
 
+NEGATION_PENALTY = 15.0
+
+
 def _service_score(query_words: list[str], service: ServiceInfo) -> float:
-    """Среднее по словам запроса: совпадение в названии весит больше, чем в категории."""
+    """Среднее по словам запроса: совпадение в названии весит больше, чем в категории.
+
+    «Маникюр без покрытия» и «Маникюр с покрытием» одинаково совпадают со словами «маникюр покрытие»;
+    если клиент не написал «без», услуга «без X» уступает услуге с X.
+    """
     name_words = _words(service.name)
     category_words = _words(service.category or "")
     total = 0.0
     for token in query_words:
         total += max(_word_score(token, name_words), 0.9 * _word_score(token, category_words))
-    return total / len(query_words)
+    score = total / len(query_words)
+    if "без" in name_words and "без" not in query_words:
+        score -= NEGATION_PENALTY
+    return score
 
 
 def search_services(services: list[ServiceInfo], query: str, *, limit: int = 3) -> list[ServiceInfo]:
