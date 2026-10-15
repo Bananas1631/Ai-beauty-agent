@@ -19,6 +19,9 @@ class SalonsRepository:
         """Салон по адресу страницы: /s/{slug} и /api/v1/salons/{slug}."""
         return await self.session.scalar(select(Salon).where(Salon.slug == slug))
 
+    async def get_by_yclients_id(self, company_id: int) -> Salon | None:
+        return await self.session.scalar(select(Salon).where(Salon.yclients_company_id == company_id))
+
     def add(self, salon: Salon) -> Salon:
         self.session.add(salon)
         return salon

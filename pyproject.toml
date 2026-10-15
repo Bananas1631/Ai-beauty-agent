@@ -65,6 +65,9 @@ select = [
 ]
 ignore = ["RUF001", "RUF002", "RUF003"]  # кириллица в строках и комментариях — не ошибка
 
+[tool.ruff.lint.isort]
+known-first-party = ["beauty_agent", "scripts", "evals"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]  # assert в тестах — норма
 
@@ -72,12 +75,16 @@ ignore = ["RUF001", "RUF002", "RUF003"]  # кириллица в строках 
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "scripts"]
+mypy_path = "src,."
+explicit_package_bases = true
 plugins = ["pydantic.mypy"]
 
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# корень проекта в sys.path: тесты импортируют консольные команды из scripts/
+pythonpath = ["."]
 addopts = ["-ra", "--strict-markers"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
