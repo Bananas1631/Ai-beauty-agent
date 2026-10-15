@@ -1,0 +1,9 @@
+{
+  "success": true,
+  "data": [
+    {"id": 11, "name": "Ольга", "specialization": "Мастер ногтевого сервиса", "position": {"id": 1, "title": "Топ-мастер"}, "bookable": true, "rating": 4.9},
+    {"id": 12, "name": "Марина", "specialization": "", "position": {"id": 2, "title": "Мастер маникюра"}, "bookable": true, "rating": 4.7},
+    {"id": 13, "name": "Светлана", "specialization": "Бровист", "position": null, "bookable": false, "rating": 5}
+  ],
+  "meta": []
+}

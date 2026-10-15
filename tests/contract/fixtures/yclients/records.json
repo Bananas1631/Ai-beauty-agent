@@ -1,0 +1,8 @@
+{
+  "success": true,
+  "data": [
+    {"id": 900001, "staff_id": 11, "datetime": "2026-10-20T10:00:00+03:00", "seance_length": 5400, "record_hash": "a1b2c3d4e5", "api_id": "dialog-1-option-1", "client": {"id": 7001, "name": "Анна", "phone": "+79000000001"}},
+    {"id": 900002, "staff_id": 11, "datetime": "2026-10-20T13:30:00+03:00", "seance_length": 5400, "record_hash": "f6e5d4c3b2", "api_id": "", "client": {"id": 7002, "name": "Вера", "phone": "+79000000002"}}
+  ],
+  "meta": {"count": 2}
+}

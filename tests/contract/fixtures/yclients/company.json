@@ -1,0 +1,17 @@
+{
+  "success": true,
+  "data": {
+    "id": 555001,
+    "title": "Студия Лаванда",
+    "public_title": "Лаванда — студия красоты",
+    "short_descr": "Маникюр, педикюр, брови и ресницы",
+    "timezone_name": "Europe/Moscow",
+    "timezone": 3,
+    "address": "г. Москва, ул. Примерная, д. 1",
+    "phone": "+7 (900) 000-00-00",
+    "site": "https://lavanda.example",
+    "schedule": "Пн–Вс 10:00–21:00",
+    "active": 1
+  },
+  "meta": []
+}

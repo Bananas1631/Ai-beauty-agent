@@ -1,0 +1,18 @@
+{
+  "success": true,
+  "data": {
+    "category": [
+      {"id": 10, "title": "Ногтевой сервис"},
+      {"id": 20, "title": "Брови и ресницы"}
+    ],
+    "services": [
+      {"id": 101, "title": "Маникюр с покрытием гель-лак", "category_id": 10, "price_min": 2500, "price_max": 3000, "seance_length": 5400, "comment": "Снятие, маникюр, покрытие", "active": 1},
+      {"id": 102, "title": "Педикюр с покрытием", "category_id": 10, "price_min": 3200, "price_max": 3200, "seance_length": 7200, "comment": "", "active": 1},
+      {"id": 103, "title": "Снятие покрытия", "category_id": 10, "price_min": 500, "price_max": 500, "seance_length": 1800, "comment": null, "active": 1},
+      {"id": 201, "title": "Коррекция и окрашивание бровей", "category_id": 20, "price_min": 1500, "price_max": 1800, "seance_length": 2700, "comment": "Хной или краской", "active": 1},
+      {"id": 202, "title": "Наращивание ресниц 2D", "category_id": 20, "price_min": 3500, "price_max": 4000, "seance_length": 9000, "comment": "", "active": 1},
+      {"id": 299, "title": "Архивная услуга", "category_id": 20, "price_min": 100, "price_max": 100, "seance_length": 600, "comment": "", "active": 0}
+    ]
+  },
+  "meta": []
+}
