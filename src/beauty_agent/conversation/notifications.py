@@ -18,6 +18,7 @@ class AdminEventKind(StrEnum):
     CLIENT_MESSAGE = "client_message"  # клиент пишет в диалог, который ведёт администратор
     UNSUPPORTED_MESSAGE = "unsupported_message"  # голосовое, стикер, файл
     DEAD_LETTER = "dead_letter"  # сообщение не обработано после всех повторов
+    WEEKLY_REPORT = "weekly_report"  # еженедельный отчёт салону в рублях
 
 
 @dataclass(frozen=True, slots=True)

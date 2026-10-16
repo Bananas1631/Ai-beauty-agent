@@ -49,6 +49,9 @@ class NullQueue:
     async def submit_admin_update(self, payload: dict[str, Any]) -> None:
         return None
 
+    async def sync_booking(self, *args: object) -> None:
+        return None
+
 
 @dataclass
 class Runtime:

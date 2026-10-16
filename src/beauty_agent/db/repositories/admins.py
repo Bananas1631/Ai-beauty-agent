@@ -126,6 +126,16 @@ class DraftsRepository:
         )
         return await self.session.scalar(statement) is not None
 
+    async def edits(self, salon_id: uuid.UUID, since: datetime) -> list[tuple[str, str]]:
+        """Пары «черновик → исправленный текст» за период: по ним ищутся правки цены и времени."""
+        statement = select(Draft.text, Draft.final_text).where(
+            Draft.salon_id == salon_id,
+            Draft.created_at >= since,
+            Draft.status == DraftStatus.EDITED,
+            Draft.final_text.is_not(None),
+        )
+        return [(text, final or "") for text, final in await self.session.execute(statement)]
+
     async def stats(self, salon_id: uuid.UUID, since: datetime) -> dict[DraftStatus, list[int | None]]:
         """Решения за период: статус → похожесть исправленных текстов (для отчёта точности)."""
         statement = select(Draft.status, Draft.similarity).where(Draft.salon_id == salon_id, Draft.created_at >= since)

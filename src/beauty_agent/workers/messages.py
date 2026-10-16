@@ -53,3 +53,10 @@ def admin_update_task(self: MessageTask, payload: dict[str, Any]) -> None:
     except Exception as exc:
         logger.warning("admin_update_retry", attempt=self.request.retries + 1, error=type(exc).__name__)
         raise self.retry(exc=exc, countdown=backoff_s(self.request.retries)) from exc
+
+
+@celery.task(name="periodic.outbox_sweep")
+def outbox_sweep_task() -> int:
+    """Досылка исходящих, которые никто не отправил: сбой мессенджера, падение воркера."""
+    sent: int = run(runtime().outbox.redeliver_stale())
+    return sent

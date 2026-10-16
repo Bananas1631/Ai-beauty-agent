@@ -12,6 +12,8 @@ from structlog.typing import EventDict, Processor, WrappedLogger
 # (?<!\w) и (?!\w) не дают принять за телефон цифры внутри ID и trace_id.
 PHONE_RE = re.compile(r"(?<!\w)(?:\+7|8|7)[\s\-(]*\d{3}[\s\-)]*\d{3}[\s\-]*\d{2}[\s\-]*\d{2}(?!\w)")
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# Секрет в адресе вебхука YCLIENTS (YCLIENTS не умеет слать заголовки): в access-логе — звёздочки
+WEBHOOK_SECRET_RE = re.compile(r"(/webhooks/[a-z_]+/[0-9a-fA-F-]{36}/)[0-9a-fA-F]{16,128}")
 
 
 def _mask_phone(match: re.Match[str]) -> str:
@@ -26,6 +28,7 @@ def _mask_email(match: re.Match[str]) -> str:
 
 def mask_text(text: str) -> str:
     """Заменяет телефоны и e-mail в строке: +7*******39, a***@mail.ru."""
+    text = WEBHOOK_SECRET_RE.sub(r"\1***", text)
     return PHONE_RE.sub(_mask_phone, EMAIL_RE.sub(_mask_email, text))
 
 

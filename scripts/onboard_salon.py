@@ -275,6 +275,10 @@ async def onboard(config: OnboardingConfig, settings: Settings, runtime: Runtime
     report.bind_code = await issue_bind_code(runtime.redis, salon.id, AdminRole.OWNER)
     report.bind_link = bind_link(settings.admin_bot.username, report.bind_code)
     await _admin_bot_webhook(settings, runtime, report)
+    base = settings.app.public_url.rstrip("/")
+    if config.crm != "fake" and base.startswith("https://"):
+        secret = runtime.security.webhook_secret("yclients", salon.id)
+        report.say(f"YCLIENTS: вебхук изменений записей {base}/api/v1/webhooks/yclients/{salon.id}/{secret}")
 
     try:
         await _channels(config, settings, runtime, salon, report)

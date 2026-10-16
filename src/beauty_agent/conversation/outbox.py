@@ -4,6 +4,8 @@
 2. Воркер атомарно занимает строку (pending → sending с блокировкой на 60 секунд) и отправляет.
 3. Успех — sent; окончательный отказ мессенджера — failed; сбой сети — строка снова pending,
    а задача повторяется. Воркер, упавший посреди отправки, держит блокировку не дольше 60 секунд.
+4. Периодическая досылка (redeliver_stale) подбирает строки, которые никто не отправил:
+   напоминания при сбое мессенджера, ответы после исчерпания повторов задачи.
 """
 
 import uuid
@@ -13,7 +15,7 @@ from enum import StrEnum
 from typing import Any
 
 import structlog
-from sqlalchemy import and_, func, or_, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -135,3 +137,33 @@ class Outbox:
             row.id, status=OutboxStatus.SENT, sent_at=func.now(), external_id=external_id, locked_until=None
         )
         return DeliveryStatus.SENT
+
+    async def redeliver_stale(self, *, older_than: timedelta = timedelta(minutes=1), limit: int = 100) -> int:
+        """Дослать строки, которые ждут дольше older_than. Возвращает число отправленных."""
+        async with self.session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(OutboundMessage.salon_id, OutboundMessage.dedupe_key)
+                    .where(
+                        OutboundMessage.created_at < func.now() - older_than,
+                        or_(
+                            OutboundMessage.status == OutboxStatus.PENDING,
+                            and_(
+                                OutboundMessage.status == OutboxStatus.SENDING,
+                                OutboundMessage.locked_until < func.now(),
+                            ),
+                        ),
+                    )
+                    .order_by(OutboundMessage.created_at)
+                    .limit(limit)
+                )
+            ).all()
+        sent = 0
+        for salon_id, dedupe_key in rows:
+            try:
+                status = await self.deliver(salon_id, dedupe_key)
+            except Exception:  # мессенджер ещё недоступен — попробуем в следующий раз
+                logger.warning("outbox_redelivery_failed", salon_id=str(salon_id))
+                continue
+            sent += status is DeliveryStatus.SENT
+        return sent

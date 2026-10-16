@@ -33,6 +33,10 @@ class ProviderRegistry:
         self._providers[(salon.id, kind)] = provider
         return provider
 
+    def override(self, salon: Salon, provider: BookingProvider) -> None:
+        """Подменить провайдер салона: тесты фоновых задач и проверка сценариев на фейковом CRM."""
+        self._providers[(salon.id, salon.config.crm_kind)] = provider
+
     def _create(self, salon: Salon, kind: CrmKind) -> BookingProvider:
         if kind is CrmKind.FAKE:
             return FakeCRM()

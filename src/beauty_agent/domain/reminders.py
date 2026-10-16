@@ -3,8 +3,8 @@
 Чистые правила без ввода-вывода: когда напоминать и что написать.
 - Напоминание, время которого уже прошло к моменту записи, не ставится: записались за 3 часа —
   придёт только «за 2 часа».
-- Ночью не будим: если момент напоминания попадает на 22:00–09:00 по времени салона, оно уходит
-  в 21:00 накануне (для «за 24 часа») или пропускается (для «за 2 часа» — визит ранним утром).
+- Ночью не будим (22:00–09:00 по времени салона): «за 24 часа» поздним вечером уходит в 21:00,
+  ранним утром — в 09:00 того же дня; «за 2 часа» ночью пропускается — визит ранним утром.
 - Напоминания включаются в настройках салона: многие салоны уже шлют SMS из YCLIENTS.
 """
 
@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 QUIET_FROM = time(22)
 QUIET_TO = time(9)
 EVENING = time(21)
+MORNING = time(9)
 
 
 class ReminderKind(StrEnum):
@@ -38,8 +39,7 @@ def due_times(starts_at: datetime, now: datetime, timezone: str) -> dict[Reminde
         if _quiet(due.time()):
             if kind is not ReminderKind.DAY_BEFORE:
                 continue
-            day = due.date() if due.time() >= QUIET_FROM else due.date() - timedelta(days=1)
-            due = datetime.combine(day, EVENING, tzinfo=tz)
+            due = datetime.combine(due.date(), EVENING if due.time() >= QUIET_FROM else MORNING, tzinfo=tz)
         if due > now:
             result[kind] = due
     return result
@@ -47,8 +47,9 @@ def due_times(starts_at: datetime, now: datetime, timezone: str) -> dict[Reminde
 
 def reminder_text(kind: ReminderKind, *, salon_name: str, service: str, master: str, local_start: datetime) -> str:
     when = local_start.strftime("%d.%m в %H:%M")
-    lead = "Завтра" if kind is ReminderKind.DAY_BEFORE else "Через 2 часа"
+    # «за 24 часа» в тихие часы сдвигается, поэтому «завтра» не пишем — дата всегда явная
+    lead = "Напоминаем о записи" if kind is ReminderKind.DAY_BEFORE else "Через 2 часа ждём вас"
     return (
-        f"{lead} ждём вас в «{salon_name}»: {service}, мастер {master}, {when}.\n"
+        f"{lead} в «{salon_name}»: {service}, мастер {master}, {when}.\n"
         "Если планы изменились, напишите сюда — перенесу или отменю запись."
     )

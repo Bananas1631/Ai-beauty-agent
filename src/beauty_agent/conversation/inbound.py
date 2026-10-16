@@ -39,6 +39,10 @@ class MessageQueue(Protocol):
         """Обновление админ-бота (нажатие кнопки, ответ администратора) — в воркер."""
         ...
 
+    async def sync_booking(self, salon_id: uuid.UUID, external_id: str) -> None:
+        """Запись изменилась в YCLIENTS — сверить нашу копию и напоминания (в воркере)."""
+        ...
+
 
 @dataclass
 class InboundGate:

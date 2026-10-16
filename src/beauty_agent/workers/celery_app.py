@@ -67,6 +67,10 @@ def configure(app: Celery, settings: Settings) -> None:
         beat_schedule={
             # ночью, когда салоны закрыты: удаление переписки старше срока хранения
             "retention-nightly": {"task": "periodic.retention", "schedule": crontab(hour=3, minute=30)},
+            "catalog-sync-nightly": {"task": "periodic.catalog_sync", "schedule": crontab(hour=4, minute=0)},
+            "reminders": {"task": "periodic.reminders", "schedule": crontab(minute="*/5")},
+            "outbox-sweep": {"task": "periodic.outbox_sweep", "schedule": crontab(minute="*")},
+            "weekly-report": {"task": "periodic.weekly_report", "schedule": crontab(hour=10, minute=0, day_of_week=1)},
         },
     )
 
@@ -83,7 +87,16 @@ def declare_queues(app: Celery) -> None:
             queue.bind(channel).declare()
 
 
-celery = Celery("beauty_agent", include=["beauty_agent.workers.messages", "beauty_agent.workers.retention"])
+celery = Celery(
+    "beauty_agent",
+    include=[
+        "beauty_agent.workers.messages",
+        "beauty_agent.workers.retention",
+        "beauty_agent.workers.reminders",
+        "beauty_agent.workers.catalog_sync",
+        "beauty_agent.workers.reports",
+    ],
+)
 configure(celery, get_settings())
 
 

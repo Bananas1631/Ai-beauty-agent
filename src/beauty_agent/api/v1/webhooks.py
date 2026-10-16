@@ -11,7 +11,7 @@ import uuid
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Header, HTTPException, Path, Request, Response, status
 from fastapi.responses import PlainTextResponse
 
 from beauty_agent.adapters.channels import max as max_channel
@@ -21,6 +21,7 @@ from beauty_agent.api.deps import SessionDep
 from beauty_agent.conversation.inbound import DEDUPE_TTL_S, InboundGate
 from beauty_agent.core.redis import key
 from beauty_agent.core.security import Security
+from beauty_agent.db.models import Salon
 from beauty_agent.db.repositories.channels import ChannelAccountsRepository
 from beauty_agent.domain.enums import Channel
 from beauty_agent.runtime import Runtime
@@ -135,4 +136,35 @@ async def admin_bot_webhook(
         first = await runtime.redis.set(key("webhook", "admin_bot", update_id), "1", nx=True, ex=DEDUPE_TTL_S)
         if first:
             await runtime.queue.submit_admin_update(payload)
+    return Response(status_code=status.HTTP_200_OK)
+
+
+@router.post("/yclients/{salon_id}/{secret}")
+async def yclients_webhook(
+    salon_id: uuid.UUID,
+    secret: Annotated[str, Path(min_length=16, max_length=128)],
+    request: Request,
+    session: SessionDep,
+) -> Response:
+    """Изменение записи в YCLIENTS: перенос или отмена администратором.
+
+    YCLIENTS не подписывает вебхуки, поэтому секрет — в адресе, а содержимому события мы
+    не доверяем: берём из него только ID записи и перечитываем запись из API YCLIENTS в воркере.
+    Подделанный вебхук может разве что вызвать лишнюю сверку.
+    """
+    if not _security(request).verify_webhook("yclients", salon_id, secret):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED)
+    payload = await read_json(request)
+    salon = await session.get(Salon, salon_id)
+    record_id = str(payload.get("resource_id") or "")
+    if (
+        salon is not None
+        and payload.get("resource") == "record"
+        and str(payload.get("company_id")) == str(salon.yclients_company_id)
+        and record_id.isascii()
+        and record_id.isdigit()
+        and len(record_id) <= 18
+    ):
+        runtime: Runtime = request.app.state.runtime
+        await runtime.queue.sync_booking(salon_id, record_id)
     return Response(status_code=status.HTTP_200_OK)

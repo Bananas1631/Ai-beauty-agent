@@ -4,6 +4,7 @@
 """
 
 import re
+from datetime import time
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -39,6 +40,9 @@ class SalonSettings(BaseModel):
     # напоминания за 24 и 2 часа; выключены, если салон уже шлёт SMS-напоминания из YCLIENTS
     reminders_enabled: bool = False
     average_check_rub: Decimal | None = Field(None, ge=0, le=1_000_000)  # для отчёта в рублях
+    # рабочее время администраторов: ответы вне его — отдельная строка еженедельного отчёта
+    work_start: time = time(10)
+    work_end: time = time(21)
     privacy: PrivacyInfo | None = None
 
     @field_validator("allowed_origins")

@@ -4,9 +4,12 @@
 администратор присылает исправленный текст, он уходит клиенту; «Отвечу сам» — черновик
 не пригодился. Решение — атомарный переход из pending: второе нажатие или второй администратор
 ничего не отправят повторно. Отчёт точности — доля черновиков, отправленных без правок или с малыми
-правками (похожесть rapidfuzz ≥ 90), — решает, когда переводить салон на автопилот.
+правками (похожесть rapidfuzz ≥ 90), — решает, когда переводить салон на автопилот:
+не меньше 100 решённых черновиков за неделю, точность от 90% и ни одной критичной правки —
+когда администратор исправил цену или время (числа в черновике и в отправленном тексте разные).
 """
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -28,6 +31,10 @@ from beauty_agent.domain.enums import Channel, DraftStatus, MessageRole
 logger = structlog.get_logger(__name__)
 
 SMALL_EDIT = 90  # похожесть от 90 из 100 — правка мелкая: опечатка, слово, знак препинания
+AUTOPILOT_MIN_DECIDED = 100
+AUTOPILOT_MIN_ACCURACY = 0.9
+# Число отдельным словом: цифры внутри ссылки или ID («test-b606dbcb») ценой не считаются
+_NUMBER = re.compile(r"(?<![\w/-])\d+(?:[ :.,]\d+)*(?![\w/])")
 MAX_ADMIN_TEXT = 4000
 
 
@@ -71,6 +78,16 @@ def similarity(draft: str, final: str) -> int:
     return round(fuzz.ratio(draft, final))
 
 
+def numbers(text: str) -> set[str]:
+    """Цены, время, даты из текста: «1 800», «15:00», «20.10» — без пробелов внутри."""
+    return {match.replace(" ", "") for match in _NUMBER.findall(text)}
+
+
+def critical_edit(draft: str, final: str) -> bool:
+    """Администратор исправил цену, время или дату — ошибка агента, которая стоила бы клиента."""
+    return numbers(draft) != numbers(final)
+
+
 @dataclass(frozen=True, slots=True)
 class AccuracyReport:
     total: int
@@ -79,6 +96,7 @@ class AccuracyReport:
     small_edits: int
     big_edits: int
     manual: int
+    critical: int = 0  # правки цены или времени
 
     @property
     def decided(self) -> int:
@@ -88,6 +106,10 @@ class AccuracyReport:
     def accuracy(self) -> float:
         """Доля черновиков, ушедших без правок или с малыми правками, среди решённых."""
         return (self.as_is + self.small_edits) / self.decided if self.decided else 0.0
+
+    @property
+    def autopilot_ready(self) -> bool:
+        return self.decided >= AUTOPILOT_MIN_DECIDED and self.accuracy >= AUTOPILOT_MIN_ACCURACY and self.critical == 0
 
     def text(self, salon_name: str, days: int) -> str:
         if not self.total:
@@ -99,7 +121,11 @@ class AccuracyReport:
             f"С большими правками: {self.big_edits}\n"
             f"Ответили сами: {self.manual}\n"
             f"Ждут решения: {self.pending}\n"
-            f"Точность: {self.accuracy:.0%}"
+            f"Исправлены цена или время: {self.critical}\n"
+            f"Точность: {self.accuracy:.0%}\n"
+            f"Можно на автопилот: {'да' if self.autopilot_ready else 'нет'} "
+            f"(нужно от {AUTOPILOT_MIN_DECIDED} решений, от {AUTOPILOT_MIN_ACCURACY:.0%} без правок, "
+            "без ошибок в цене и времени)"
         )
 
 
@@ -222,7 +248,9 @@ class ShadowMode:
 
     async def report(self, salon_id: uuid.UUID, since: datetime) -> AccuracyReport:
         async with self.session_factory() as session:
-            stats = await DraftsRepository(session).stats(salon_id, since)
+            drafts = DraftsRepository(session)
+            stats = await drafts.stats(salon_id, since)
+            edits = await drafts.edits(salon_id, since)
         edited = [value or 0 for value in stats[DraftStatus.EDITED]]
         small = sum(1 for value in edited if value >= SMALL_EDIT)
         return AccuracyReport(
@@ -232,4 +260,5 @@ class ShadowMode:
             small_edits=small,
             big_edits=len(edited) - small,
             manual=len(stats[DraftStatus.MANUAL]),
+            critical=sum(critical_edit(draft, final) for draft, final in edits),
         )

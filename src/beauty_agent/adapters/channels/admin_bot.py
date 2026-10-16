@@ -174,6 +174,7 @@ class AdminBotNotifier:
             AdminEventKind.BOOKING_PENDING: "Подтвердите запись вручную",
             AdminEventKind.UNSUPPORTED_MESSAGE: "Голосовое или файл от клиента",
             AdminEventKind.DEAD_LETTER: "Сообщение клиента не обработано",
+            AdminEventKind.WEEKLY_REPORT: "Отчёт за неделю",
         }
         text = f"{titles.get(event.kind, 'Уведомление')} · {salon_name}\n{_clip(event.text)}"
         conversation_id = uuid.UUID(event.conversation_id) if event.conversation_id else None
