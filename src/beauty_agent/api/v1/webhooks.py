@@ -17,8 +17,9 @@ from fastapi.responses import PlainTextResponse
 from beauty_agent.adapters.channels import max as max_channel
 from beauty_agent.adapters.channels import telegram, vk
 from beauty_agent.adapters.channels.admin_bot import ADMIN_BOT_ACCOUNT
-from beauty_agent.api.deps import SessionDep
+from beauty_agent.api.deps import SessionDep, client_ip, enforce
 from beauty_agent.conversation.inbound import DEDUPE_TTL_S, InboundGate
+from beauty_agent.core.rate_limit import WEBHOOK_ACCOUNT_LIMIT, WEBHOOK_FAIL_LIMIT, RateLimiter
 from beauty_agent.core.redis import key
 from beauty_agent.core.security import Security
 from beauty_agent.db.models import Salon
@@ -50,6 +51,21 @@ async def read_json(request: Request) -> dict[str, Any]:
     return data
 
 
+async def check_secret(request: Request, valid: bool, subject: str) -> None:
+    """Секрет вебхука: IP с 20 неверными секретами за 10 минут получает 429 ещё до проверки.
+
+    Верный секрет — лимит на канал: сломанный или взломанный бот не забьёт очередь.
+    """
+    limiter = RateLimiter(request.app.state.redis)
+    ip = client_ip(request)
+    if await limiter.exhausted(WEBHOOK_FAIL_LIMIT, ip):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, headers={"Retry-After": "600"})
+    if not valid:
+        await limiter.hit(WEBHOOK_FAIL_LIMIT, ip)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED)
+    await enforce(request, WEBHOOK_ACCOUNT_LIMIT, subject)
+
+
 def _security(request: Request) -> Security:
     security: Security = request.app.state.security
     return security
@@ -67,8 +83,7 @@ async def telegram_webhook(
     session: SessionDep,
     secret: Annotated[str | None, Header(alias="X-Telegram-Bot-Api-Secret-Token")] = None,
 ) -> Response:
-    if not _security(request).verify_webhook("telegram", account_id, secret):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED)
+    await check_secret(request, _security(request).verify_webhook("telegram", account_id, secret), str(account_id))
     payload = await read_json(request)
     found = await ChannelAccountsRepository(session).get_with_salon(account_id)
     # Канал отключён — всё равно 200: иначе Telegram будет повторять обновление часами
@@ -85,8 +100,7 @@ async def vk_webhook(account_id: uuid.UUID, request: Request, session: SessionDe
     security = _security(request)
     expected = vk.vk_secret(security.webhook_secret("vk", account_id))
     provided = str(payload.get("secret") or "")
-    if not provided or not hmac.compare_digest(expected, provided):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED)
+    await check_secret(request, bool(provided) and hmac.compare_digest(expected, provided), str(account_id))
     found = await ChannelAccountsRepository(session).get_with_salon(account_id)
     if found is None or found[0].channel is not Channel.VK:
         return PlainTextResponse("ok")
@@ -107,8 +121,7 @@ async def max_webhook(
     session: SessionDep,
     secret: Annotated[str | None, Header(alias="X-Max-Bot-Api-Secret")] = None,
 ) -> Response:
-    if not _security(request).verify_webhook("max", account_id, secret):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED)
+    await check_secret(request, _security(request).verify_webhook("max", account_id, secret), str(account_id))
     payload = await read_json(request)
     found = await ChannelAccountsRepository(session).get_with_salon(account_id)
     # Отключённый канал — тоже 200: иначе MAX повторяет обновление 8 часов и отписывает бота
@@ -128,8 +141,7 @@ async def admin_bot_webhook(
     runtime: Runtime = request.app.state.runtime
     if runtime.admin_bot is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND)
-    if not _security(request).verify_webhook("admin_bot", ADMIN_BOT_ACCOUNT, secret):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED)
+    await check_secret(request, _security(request).verify_webhook("admin_bot", ADMIN_BOT_ACCOUNT, secret), "admin_bot")
     payload = await read_json(request)
     update_id = payload.get("update_id")
     if isinstance(update_id, int):
@@ -152,8 +164,7 @@ async def yclients_webhook(
     не доверяем: берём из него только ID записи и перечитываем запись из API YCLIENTS в воркере.
     Подделанный вебхук может разве что вызвать лишнюю сверку.
     """
-    if not _security(request).verify_webhook("yclients", salon_id, secret):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED)
+    await check_secret(request, _security(request).verify_webhook("yclients", salon_id, secret), f"yclients:{salon_id}")
     payload = await read_json(request)
     salon = await session.get(Salon, salon_id)
     record_id = str(payload.get("resource_id") or "")

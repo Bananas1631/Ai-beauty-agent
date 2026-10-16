@@ -13,12 +13,12 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from beauty_agent.api.deps import SalonDep, SessionDep
+from beauty_agent.api.deps import PublicRateLimit, SalonDep, SessionDep
 from beauty_agent.catalog.lookup import DbCatalog
 from beauty_agent.domain.consent import CONSENT_VERSION
 from beauty_agent.domain.entities import ServiceInfo
 
-router = APIRouter(tags=["pages"], include_in_schema=False)
+router = APIRouter(tags=["pages"], include_in_schema=False, dependencies=[PublicRateLimit])
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 

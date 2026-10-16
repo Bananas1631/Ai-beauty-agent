@@ -283,8 +283,10 @@ async def test_accuracy_report_and_token(session: AsyncSession, shadow_env: Env)
     assert "Отправлены без правок: 1" in report
     assert "Ждут решения: 1" in report
     assert "Точность: 100%" in report
-    claims = SECURITY.verify_admin_token(token_text.rsplit("\n", 1)[-1])
-    assert (claims.user_id, claims.salon_id) == (str(ADMIN), shadow_env.salon.id)
+    access = token_text.split("\n\n")[1]
+    claims = SECURITY.verify_admin_token(access)
+    assert (claims.user_id, claims.salon_id, claims.role) == (str(ADMIN), shadow_env.salon.id, AdminRole.OWNER)
+    assert len(token_text.split("\n\n")[2]) >= 40  # refresh-токен
 
 
 async def test_repeated_task_does_not_duplicate_draft(session: AsyncSession, shadow_env: Env) -> None:
@@ -336,3 +338,19 @@ async def test_handoff_admin_reply_and_return(
         )
     ).all()
     assert MessageRole.ADMIN in roles
+
+
+async def test_invite_is_owner_only(session: AsyncSession, redis: Redis, shadow_env: Env) -> None:
+    await AdminsRepository(session).bind(shadow_env.salon.id, "77", "77", "Вера", AdminRole.ADMIN)
+    await session.commit()
+
+    await shadow_env.admin_says("/invite")  # владелец
+    invite = shadow_env.bot_api.sent()[-1]["text"]
+    await shadow_env.admin_says("/invite", user=77)  # администратор
+    refused = shadow_env.bot_api.sent()[-1]["text"]
+    code = invite.rsplit(" ", 1)[-1]
+    await shadow_env.admin_says(f"/start {code}", user=78)
+
+    assert "Код для нового администратора" in invite
+    assert refused.startswith("Приглашать администраторов может только владелец")
+    assert await AdminsRepository(session).role_of(shadow_env.salon.id, "78") is AdminRole.ADMIN

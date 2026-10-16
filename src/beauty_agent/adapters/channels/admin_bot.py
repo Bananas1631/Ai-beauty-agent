@@ -6,7 +6,8 @@
   «Исправить», «Отвечу сам» (conversation/shadow_mode.py).
 - Уведомления: передача диалога, сообщения клиента в диалоге у администратора, запись
   «подтвердить вручную», бюджет, голосовые. Ответ на уведомление о диалоге уходит клиенту.
-- Команды: /report — отчёт точности черновиков за неделю, /token — JWT для API инбокса.
+- Команды: /report — отчёт точности черновиков за неделю, /token — пара токенов для API
+  инбокса (access на 15 минут и refresh), /invite — код привязки администратора (только владелец).
 
 Права проверяются на каждое действие: кнопка или ответ работают, только если нажавший — активный
 администратор салона, которому принадлежит черновик или диалог. Текст клиента отправляется
@@ -30,7 +31,7 @@ from beauty_agent.conversation.handoff import Handoff
 from beauty_agent.conversation.notifications import AdminEvent, AdminEventKind
 from beauty_agent.conversation.shadow_mode import Decision, DecisionStatus, DraftAction, ShadowMode
 from beauty_agent.core.redis import key
-from beauty_agent.core.security import Security
+from beauty_agent.core.security import RefreshTokens, Security
 from beauty_agent.db.models import Conversation, Draft, Salon
 from beauty_agent.db.repositories.admins import AdminsRepository
 from beauty_agent.domain.enums import AdminRole
@@ -51,7 +52,8 @@ HELP = (
     "Это бот администратора салона.\n"
     "Сюда приходят черновики ответов клиентам и уведомления.\n"
     "/report — точность черновиков за неделю\n"
-    "/token — доступ к API инбокса"
+    "/token — доступ к API инбокса\n"
+    "/invite — код привязки для нового администратора (только владелец)"
 )
 
 
@@ -216,8 +218,10 @@ class AdminBot:
         security: Security,
         shadow: ShadowMode,
         handoff: Handoff,
+        username: str | None = None,
     ) -> None:
         self.api = api
+        self.username = username
         self.session_factory = session_factory
         self.redis = redis
         self.security = security
@@ -255,6 +259,8 @@ class AdminBot:
             await self._report(chat_id, user_id)
         elif text.startswith("/token"):
             await self._token(chat_id, user_id)
+        elif text.startswith("/invite"):
+            await self._invite(chat_id, user_id)
         else:
             await self.api.send(chat_id, HELP)
 
@@ -291,17 +297,40 @@ class AdminBot:
             report = await self.shadow.report(salon.id, since)
             await self.api.send(chat_id, report.text(salon.name, REPORT_DAYS))
 
+    async def _memberships(self, user_id: str) -> list[tuple[Salon, AdminRole]]:
+        async with self.session_factory() as session:
+            return await AdminsRepository(session).memberships(user_id)
+
     async def _token(self, chat_id: str, user_id: str) -> None:
-        salons = await self._salons(user_id)
-        if not salons:
+        memberships = await self._memberships(user_id)
+        if not memberships:
             await self.api.send(chat_id, "Вы не привязаны ни к одному салону.")
             return
-        hours = int(self.security.jwt_ttl.total_seconds() // 3600)
-        for salon in salons:
-            token = self.security.issue_admin_token(user_id=user_id, salon_id=salon.id)
+        refresh = RefreshTokens(self.redis, ttl=self.security.refresh_ttl)
+        minutes = int(self.security.jwt_ttl.total_seconds() // 60)
+        days = int(self.security.refresh_ttl.total_seconds() // 86400)
+        for salon, role in memberships:
+            access = self.security.issue_admin_token(user_id=user_id, salon_id=salon.id, role=role)
+            refresh_token = await refresh.issue(user_id, salon.id)
             await self.api.send(
                 chat_id,
-                f"Доступ к API инбокса «{salon.name}» на {hours} ч. Никому не пересылайте:\n\n{token}",
+                f"Доступ к API инбокса «{salon.name}». Никому не пересылайте.\n"
+                f"Access-токен на {minutes} мин и refresh-токен на {days} дн. "
+                "(обновление — POST /api/v1/admin/token/refresh):\n\n"
+                f"{access}\n\n{refresh_token}",
+            )
+
+    async def _invite(self, chat_id: str, user_id: str) -> None:
+        owned = [salon for salon, role in await self._memberships(user_id) if role is AdminRole.OWNER]
+        if not owned:
+            await self.api.send(chat_id, "Приглашать администраторов может только владелец салона.")
+            return
+        for salon in owned:
+            code = await issue_bind_code(self.redis, salon.id, AdminRole.ADMIN)
+            link = bind_link(self.username, code)
+            await self.api.send(
+                chat_id,
+                f"Код для нового администратора «{salon.name}» (одноразовый, 7 дней):\n{link or '/start ' + code}",
             )
 
     async def _on_reply(self, chat_id: str, user_id: str, replied_id: int, message_id: int, text: str) -> None:

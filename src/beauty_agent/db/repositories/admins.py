@@ -54,6 +54,41 @@ class AdminsRepository:
         )
         return (await self.session.scalars(statement)).all()
 
+    async def role_of(self, salon_id: uuid.UUID, telegram_user_id: str) -> AdminRole | None:
+        """Роль активного администратора; None — не привязан или отключён. Источник правды — БД, а не токен."""
+        statement = select(SalonAdmin.role).where(
+            SalonAdmin.salon_id == salon_id,
+            SalonAdmin.telegram_user_id == telegram_user_id,
+            SalonAdmin.is_active,
+        )
+        return await self.session.scalar(statement)
+
+    async def memberships(self, telegram_user_id: str) -> list[tuple[Salon, AdminRole]]:
+        statement = (
+            select(Salon, SalonAdmin.role)
+            .join(SalonAdmin, SalonAdmin.salon_id == Salon.id)
+            .where(SalonAdmin.telegram_user_id == telegram_user_id, SalonAdmin.is_active)
+            .order_by(Salon.name)
+        )
+        return [(row[0], row[1]) for row in await self.session.execute(statement)]
+
+    async def team(self, salon_id: uuid.UUID) -> Sequence[SalonAdmin]:
+        statement = select(SalonAdmin).where(SalonAdmin.salon_id == salon_id).order_by(SalonAdmin.created_at)
+        return (await self.session.scalars(statement)).all()
+
+    async def deactivate(self, salon_id: uuid.UUID, telegram_user_id: str) -> bool:
+        statement = (
+            update(SalonAdmin)
+            .where(
+                SalonAdmin.salon_id == salon_id,
+                SalonAdmin.telegram_user_id == telegram_user_id,
+                SalonAdmin.is_active,
+            )
+            .values(is_active=False)
+            .returning(SalonAdmin.id)
+        )
+        return await self.session.scalar(statement) is not None
+
     async def is_admin(self, salon_id: uuid.UUID, telegram_user_id: str) -> bool:
         statement = select(SalonAdmin.id).where(
             SalonAdmin.salon_id == salon_id,

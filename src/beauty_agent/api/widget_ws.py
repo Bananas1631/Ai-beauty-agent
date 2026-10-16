@@ -1,4 +1,4 @@
-"""WebSocket веб-чата: живой диалог в браузере на странице салона.
+"""WebSocket веб-чата и встраиваемый виджет /widget.js для сайтов салонов.
 
 - Неизвестный салон или чужой Origin — соединение закрывается до accept (защита от CSWSH:
   чужой сайт не сможет говорить с агентом от имени посетителя).
@@ -9,11 +9,13 @@
 
 import re
 import secrets
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from beauty_agent.agent.guardrails import MAX_INPUT_CHARS
@@ -31,6 +33,19 @@ router = APIRouter()
 
 _SESSION = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 _SLUG = re.compile(SLUG_PATTERN)
+
+
+WIDGET = Path(__file__).parent / "static" / "widget.js"
+
+
+@router.get("/widget.js", include_in_schema=False)
+async def widget_script() -> FileResponse:
+    """Скрипт виджета для чужих сайтов: кэшируется браузером на час, обновление — с новым деплоем."""
+    return FileResponse(
+        WIDGET,
+        media_type="application/javascript; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 def _origin(url: str) -> str:

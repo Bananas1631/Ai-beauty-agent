@@ -3,9 +3,9 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, ConfigDict
 
-from beauty_agent.api.deps import SalonDep
+from beauty_agent.api.deps import PublicRateLimit, SalonDep
 
-router = APIRouter(prefix="/salons", tags=["salons"])
+router = APIRouter(prefix="/salons", tags=["salons"], dependencies=[PublicRateLimit])
 
 
 class SalonOut(BaseModel):

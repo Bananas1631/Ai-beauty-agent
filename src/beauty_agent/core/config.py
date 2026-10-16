@@ -189,7 +189,8 @@ class SecuritySettings(EnvSection):
     fernet_keys: SecretStr | None = None
     webhook_key: SecretStr | None = None  # из него выводится secret_token вебхука каждого канала
     jwt_secret: SecretStr | None = None
-    jwt_ttl_s: int = 8 * 3600
+    jwt_ttl_s: int = 15 * 60  # access-токен короткий: утёкший живёт 15 минут
+    refresh_ttl_s: int = 30 * 24 * 3600  # refresh-токен меняется при каждом обновлении
 
     @property
     def configured(self) -> bool:
