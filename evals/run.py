@@ -126,8 +126,25 @@ def tools_ok(scenario: Scenario, tools: list[str]) -> bool:
     return expected_present and no_stray_booking
 
 
+ENGINES: dict[str, type[Agent]] = {"own": Agent}
+
+
+def engine_class(name: str) -> type[Agent]:
+    """own — свой цикл (agent/loop.py); langgraph — эксперимент в ветке experiment/langgraph."""
+    if name == "langgraph" and name not in ENGINES:
+        from beauty_agent.agent.langgraph_agent import LangGraphAgent
+
+        ENGINES[name] = LangGraphAgent
+    return ENGINES[name]
+
+
 async def run_scenario(
-    scenario: Scenario, llm: LLMClient, *, prompt_version: str, judge_model: Judge | None = None
+    scenario: Scenario,
+    llm: LLMClient,
+    *,
+    prompt_version: str,
+    judge_model: Judge | None = None,
+    engine: str = "own",
 ) -> ScenarioResult:
     redis = FakeAsyncRedis(decode_responses=True)
     crm = FakeCRM(clock=lambda: NOW)
@@ -135,7 +152,7 @@ async def run_scenario(
         salon_id=f"eval-{scenario.id}", timezone=FAKE_SALON.timezone, provider=crm, redis=redis, ledger=NullLedger()
     )
     booking.offered = set()
-    agent = Agent(llm, default_registry(), prompt_version=prompt_version)
+    agent = engine_class(engine)(llm, default_registry(), prompt_version=prompt_version)
     state = DialogState()
     answers: list[str] = []
     tools: list[str] = []
@@ -204,6 +221,7 @@ async def run_model(
     concurrency: int,
     prompt_version: str,
     judge_model: Judge | None = None,
+    engine: str = "own",
 ) -> list[ScenarioResult]:
     semaphore = asyncio.Semaphore(concurrency)
 
@@ -211,7 +229,7 @@ async def run_model(
         async with semaphore:
             try:
                 return await asyncio.wait_for(
-                    run_scenario(scenario, llm, prompt_version=prompt_version, judge_model=judge_model),
+                    run_scenario(scenario, llm, prompt_version=prompt_version, judge_model=judge_model, engine=engine),
                     SCENARIO_TIMEOUT_S,
                 )
             except TimeoutError:
@@ -310,6 +328,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     report: dict[str, Any] = {
         "dataset": args.dataset,
         "prompt_version": args.prompt,
+        "engine": args.engine,
         "judge": judge_model.name,
         "started_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "date": date.today().isoformat(),
@@ -317,7 +336,12 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     }
     for key, llm in pick_models(args.models.split(",")).items():
         results = await run_model(
-            scenarios, llm, concurrency=args.concurrency, prompt_version=args.prompt, judge_model=judge_model
+            scenarios,
+            llm,
+            concurrency=args.concurrency,
+            prompt_version=args.prompt,
+            judge_model=judge_model,
+            engine=args.engine,
         )
         report["models"][key] = {
             "metrics": summarize(results),
@@ -343,6 +367,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--models", default="offline", help="через запятую: offline, qwen3-235b, gigachat-2-lite…")
     parser.add_argument("--judge", default="rules", help="судья faithfulness: rules или ключ модели")
     parser.add_argument("--prompt", default=DEFAULT_PROMPT_VERSION)
+    parser.add_argument("--engine", default="own", choices=["own", "langgraph"], help="цикл агента")
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--limit", type=int, default=0, help="только первые N сценариев каждого датасета")
     parser.add_argument("--tag", help="только сценарии с этим тегом")
