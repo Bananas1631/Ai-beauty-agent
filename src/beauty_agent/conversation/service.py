@@ -66,6 +66,8 @@ from beauty_agent.domain.consent import (
     strip_personal_data,
 )
 from beauty_agent.domain.enums import Channel, ConversationStatus, MessageRole, MessageStatus, ReplyMode
+from beauty_agent.domain.events import LlmCallFinished, LlmCallFinishedData, MessageReceived, MessageReceivedData
+from beauty_agent.events.outbox import record_event
 from beauty_agent.rag.embeddings import EmbeddingsClient, HashingEmbeddings
 from beauty_agent.rag.retriever import HybridRetriever, RagSalonInfo
 
@@ -103,6 +105,37 @@ class IncomingMessage:
     photo: PhotoDescription | None = None  # фото-референс, разобранный workers/photo.py
     # Фото, которое агент не разбирает (режим admin, модель не уверена): сразу администратору
     photo_handoff_reason: str | None = None
+
+
+def message_received(
+    salon_id: uuid.UUID, message_id: uuid.UUID, conversation_id: uuid.UUID, client_id: uuid.UUID, channel: Channel
+) -> MessageReceived:
+    """Событие без текста сообщения: только ID и канал."""
+    return MessageReceived(
+        salon_id=salon_id,
+        data=MessageReceivedData(
+            message_id=message_id, conversation_id=conversation_id, client_id=client_id, channel=channel
+        ),
+    )
+
+
+def llm_call_finished(salon_id: uuid.UUID, conversation_id: uuid.UUID, result: AgentResult) -> LlmCallFinished:
+    return LlmCallFinished(
+        salon_id=salon_id,
+        data=LlmCallFinishedData(
+            conversation_id=conversation_id,
+            model=result.model,
+            prompt_version=result.prompt_version,
+            prompt_tokens=result.usage.prompt_tokens,
+            completion_tokens=result.usage.completion_tokens,
+            cost_rub=result.cost_rub,
+            latency_ms=result.latency_ms,
+            tool_calls=len(result.tool_calls),
+            cache_hit=result.cache_hit,
+            handed_off=result.handed_off,
+            guardrail=result.guardrail,
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +244,7 @@ class ConversationService:
                 return existing.id, False
             if stored is None:  # pragma: no cover — без external_id конфликта не бывает
                 raise RuntimeError("Сообщение не сохранено")
+            await record_event(session, message_received(salon.id, stored, conversation.id, client.id, message.channel))
             await session.commit()
             return stored, True
 
@@ -339,6 +373,10 @@ class ConversationService:
             stored = await conversations.add_message(
                 conversation_id, MessageRole.CLIENT, text, external_id=message.external_message_id
             )
+            if stored is not None:
+                await record_event(
+                    session, message_received(salon.id, stored, conversation_id, client.id, message.channel)
+                )
         if stored is None:
             delivery_key = self._outbox_key(message)
             draft = await DraftsRepository(session).by_key(salon.id, delivery_key) if delivery_key else None
@@ -484,6 +522,7 @@ class ConversationService:
             cost_rub=result.cost_rub,
         )
         await conversations.add_tool_calls(conversation_id, result.tool_calls)
+        await record_event(session, llm_call_finished(salon.id, conversation_id, result))
         await conversations.set_summary(conversation_id, state.summary)
         await self.budget.add(str(salon.id), result.cost_rub)
         await self.states.save(str(salon.id), str(conversation_id), state)

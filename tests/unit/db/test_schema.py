@@ -56,12 +56,20 @@ def test_all_tables_are_registered() -> None:
         "api_keys",
         "drafts",
         "consents",
+        "event_outbox",
     }
 
     assert set(Base.metadata.tables) == expected
 
 
-@pytest.mark.parametrize("table", Base.metadata.sorted_tables, ids=lambda t: t.name)
+# Журналы с порядком: ключ BIGINT по возрастанию (relay публикует по нему), строки не правятся —
+# только отметка о публикации, поэтому updated_at не нужен
+ORDERED_LOGS = {"event_outbox"}
+
+
+@pytest.mark.parametrize(
+    "table", [table for table in Base.metadata.sorted_tables if table.name not in ORDERED_LOGS], ids=lambda t: t.name
+)
 def test_uuid_key_and_timestamps(table: Table) -> None:
     sql = ddl(table)
 

@@ -14,6 +14,7 @@ services:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     ports:
       - "127.0.0.1:8000:8000"
     depends_on: &app-deps
@@ -46,6 +47,23 @@ services:
     ports: []
     command: ["celery", "-A", "beauty_agent.workers.celery_app", "beat", "--loglevel", "INFO",
               "--schedule", "/tmp/celerybeat-schedule"]
+    healthcheck:
+      disable: true
+
+  # Relay доменных событий: event_outbox → Kafka (events/outbox_relay.py, ADR 013).
+  # Несколько экземпляров не мешают друг другу: салон публикует тот, кто взял его блокировку
+  relay:
+    <<: *app
+    ports: []
+    command: ["python", "-m", "beauty_agent.events.outbox_relay"]
+    environment:
+      <<: *app-env
+      METRICS_PORT: "9101"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
     healthcheck:
       disable: true
 
@@ -119,6 +137,55 @@ services:
       timeout: 3s
       retries: 10
 
+  # Kafka в режиме KRaft: один узел — и брокер, и контроллер (для разработки).
+  # Изнутри сети Docker — kafka:9092, с хоста — localhost:9094. Топики создаёт relay
+  # (6 партиций, хранение 7 дней), автосоздание выключено: опечатка не создаст новый топик
+  kafka:
+    image: apache/kafka:3.9.1
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,HOST://:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,HOST://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      CLUSTER_ID: 5mujQ_vQSM6TGzpjd86_lw  # UUID в base64 — любой, но постоянный для тома kafkadata
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: "168"
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+    ports:
+      - "127.0.0.1:9094:9094"
+    volumes:
+      - kafkadata:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  # Kafka UI — топики, сообщения, группы и lag: docker compose -f deploy/docker-compose.yml --profile events up -d
+  # http://localhost:8080 — только с этой машины
+  kafka-ui:
+    image: kafbat/kafka-ui:v1.2.0
+    profiles: ["events"]
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "false"
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
   rabbitmq:
     image: rabbitmq:4-management-alpine
     # RabbitMQ хранит данные в папке с именем узла, а оно строится из hostname
@@ -142,5 +209,6 @@ volumes:
   pgdata:
   redisdata:
   rabbitmqdata:
+  kafkadata:
   prometheusdata:
   grafanadata:

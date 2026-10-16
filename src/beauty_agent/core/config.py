@@ -199,6 +199,22 @@ class RabbitMQSettings(EnvSection):
         return f"amqp://{user}:{password}@{self.host}:{self.port}/{quote(self.vhost, safe='')}"
 
 
+class KafkaSettings(EnvSection):
+    """Журнал доменных событий (ADR 013): relay публикует outbox, потребители читают своими группами."""
+
+    model_config = SettingsConfigDict(env_prefix="KAFKA_")
+
+    bootstrap_servers: str = "localhost:9094"
+    client_id: str = "beauty-agent"
+    # Топики создаёт relay при старте: 6 партиций по salon_id, неделя хранения
+    partitions: int = Field(6, ge=1, le=64)
+    replication_factor: int = Field(1, ge=1, le=5)
+    retention_days: int = Field(7, ge=1, le=90)
+    relay_batch: int = Field(200, ge=1, le=5000)
+    relay_idle_s: float = Field(0.5, gt=0, le=30)
+    request_timeout_ms: int = Field(10_000, ge=1000, le=120_000)
+
+
 class SecuritySettings(EnvSection):
     """Ключи шифрования токенов каналов, подписи вебхуков и JWT для API инбокса.
 
@@ -249,6 +265,7 @@ class Settings(BaseModel):
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     rabbitmq: RabbitMQSettings = Field(default_factory=RabbitMQSettings)
+    kafka: KafkaSettings = Field(default_factory=KafkaSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     yclients: YclientsSettings = Field(default_factory=YclientsSettings)
     sentry: SentrySettings = Field(default_factory=SentrySettings)

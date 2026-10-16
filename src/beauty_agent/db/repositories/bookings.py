@@ -25,6 +25,14 @@ from beauty_agent.db.repositories.reminders import RemindersRepository
 from beauty_agent.domain.booking_engine.service import BookingEntry, StoredBooking
 from beauty_agent.domain.entities import ClientContact, Slot
 from beauty_agent.domain.enums import BookingStatus
+from beauty_agent.domain.events import (
+    BookingCancelled,
+    BookingCreated,
+    BookingData,
+    BookingRescheduled,
+    BookingRescheduledData,
+)
+from beauty_agent.events.outbox import record_event
 
 logger = structlog.get_logger(__name__)
 
@@ -46,8 +54,28 @@ def _uuid_or_none(value: str) -> uuid.UUID | None:
         return None
 
 
+def booking_data(booking: Booking) -> BookingData:
+    """Данные события о записи: только ID, время, цена и статус — без имени и телефона клиента."""
+    return BookingData(
+        booking_id=booking.id,
+        external_id=booking.external_id,
+        client_id=booking.client_id,
+        conversation_id=booking.conversation_id,
+        service_id=booking.service_id,
+        master_id=booking.master_id,
+        starts_at=booking.starts_at,
+        ends_at=booking.ends_at,
+        price=booking.price,
+        status=booking.status,
+        created_by_ai=booking.created_by_ai,
+    )
+
+
 class SqlBookingLedger:
-    """Реализация BookingLedger: сохраняет запись движка в таблицу bookings."""
+    """Реализация BookingLedger: сохраняет запись движка в таблицу bookings.
+
+    Каждое изменение пишет доменное событие в event_outbox той же транзакцией (events/outbox.py).
+    """
 
     def __init__(
         self,
@@ -115,6 +143,7 @@ class SqlBookingLedger:
                 await self._fill_client_card(entry.client_id, entry.client)
             if self.reminders_enabled and entry.status is BookingStatus.CONFIRMED:
                 await self.reminders.plan(booking.id, booking.starts_at, self.clock(), self.timezone)
+            await record_event(self.session, BookingCreated(salon_id=self.salon_id, data=booking_data(booking)))
             await self.session.commit()
         except IntegrityError as exc:
             await self.session.rollback()
@@ -161,6 +190,7 @@ class SqlBookingLedger:
             return
         booking.status = BookingStatus.CANCELLED
         await self.reminders.cancel_pending(booking.id)
+        await record_event(self.session, BookingCancelled(salon_id=self.salon_id, data=booking_data(booking)))
         await self.session.commit()
 
     async def move(self, external_id: str, slot: Slot) -> None:
@@ -170,6 +200,7 @@ class SqlBookingLedger:
         if booking is None or master is None:
             logger.warning("booking_move_not_found", external_id=external_id)
             return
+        previous_starts_at, previous_master_id = booking.starts_at, booking.master_id
         booking.master_id = master.id
         booking.starts_at = slot.starts_at
         booking.ends_at = slot.ends_at
@@ -178,6 +209,12 @@ class SqlBookingLedger:
             await self.reminders.cancel_pending(booking.id)
             if self.reminders_enabled and booking.status is BookingStatus.CONFIRMED:
                 await self.reminders.plan(booking.id, slot.starts_at, self.clock(), self.timezone)
+            data = BookingRescheduledData(
+                **booking_data(booking).model_dump(),
+                previous_starts_at=previous_starts_at,
+                previous_master_id=previous_master_id,
+            )
+            await record_event(self.session, BookingRescheduled(salon_id=self.salon_id, data=data))
             await self.session.commit()
         except IntegrityError:
             await self.session.rollback()

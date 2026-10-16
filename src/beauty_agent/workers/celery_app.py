@@ -92,6 +92,8 @@ def configure(app: Celery, settings: Settings) -> None:
             "reminders": {"task": "periodic.reminders", "schedule": crontab(minute="*/5")},
             "outbox-sweep": {"task": "periodic.outbox_sweep", "schedule": crontab(minute="*")},
             "embed-messages": {"task": "periodic.embed_messages", "schedule": crontab(minute="*")},
+            # визит наступил — запись засчитана ИИ: событие booking.attributed для потребителей
+            "attribute-visits": {"task": "periodic.attribute_visits", "schedule": crontab(minute="*/15")},
             "weekly-report": {"task": "periodic.weekly_report", "schedule": crontab(hour=10, minute=0, day_of_week=1)},
         },
     )
@@ -121,6 +123,7 @@ celery = Celery(
         "beauty_agent.workers.indexing",
         "beauty_agent.workers.embeddings",
         "beauty_agent.workers.photo",
+        "beauty_agent.workers.attribution",
     ],
 )
 configure(celery, get_settings())

@@ -31,7 +31,8 @@ dependencies = [
     "cryptography (>=50.0.2,<51.0.0)",
     "pyjwt (>=2.15.1,<3.0.0)",
     "prometheus-client (>=0.21,<0.22)",
-    "pillow (>=12,<13)"
+    "pillow (>=12,<13)",
+    "aiokafka (>=0.14.0,<0.15.0)"
 ]
 
 
@@ -118,7 +119,7 @@ show_missing = true
 
 # У Celery и kombu нет аннотаций типов: импорт без проверки, декораторы задач — без требования типов
 [[tool.mypy.overrides]]
-module = ["celery", "celery.*", "kombu", "kombu.*"]
+module = ["celery", "celery.*", "kombu", "kombu.*", "aiokafka", "aiokafka.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

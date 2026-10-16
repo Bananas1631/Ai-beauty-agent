@@ -71,6 +71,17 @@ LLM_CACHE_SAVED_RUB = Counter(
     ["salon_id"],
     namespace=NAMESPACE,
 )
+EVENTS_PUBLISHED = Counter(
+    "events_published_total",
+    "Доменных событий опубликовано в Kafka из event_outbox",
+    namespace=NAMESPACE,
+)
+OUTBOX_BACKLOG = Gauge(
+    "event_outbox_backlog",
+    "Неопубликованных событий в event_outbox: растёт — relay стоит или Kafka недоступна",
+    namespace=NAMESPACE,
+    multiprocess_mode="livemax",
+)
 QUEUE_MESSAGES = Gauge(
     "queue_messages",
     "Сообщений в очереди RabbitMQ в момент сбора",
@@ -97,6 +108,14 @@ def llm_cache(result: str, *, salon_id: str | None = None, saved_rub: Decimal = 
         LLM_CACHE_SAVED_RUB.labels(salon_id=salon_id).inc(float(saved_rub))
 
 
+def events_published(count: int) -> None:
+    EVENTS_PUBLISHED.inc(count)
+
+
+def outbox_backlog(count: int) -> None:
+    OUTBOX_BACKLOG.set(count)
+
+
 def llm_cost(salon_id: str, cost_rub: Decimal) -> None:
     if cost_rub > 0:
         LLM_COST_RUB.labels(salon_id=salon_id).inc(float(cost_rub))
@@ -118,6 +137,13 @@ def render() -> tuple[bytes, str]:
         multiprocess.MultiProcessCollector(registry)  # type: ignore[no-untyped-call]
         return generate_latest(registry), CONTENT_TYPE_LATEST
     return generate_latest(), CONTENT_TYPE_LATEST
+
+
+def serve_process_metrics() -> None:
+    """Отдельный процесс без multiprocess-режима (relay, потребители событий): /metrics на METRICS_PORT."""
+    port = os.environ.get("METRICS_PORT", "")
+    if port.isdigit() and not os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+        start_http_server(int(port))
 
 
 def serve_worker_metrics(port: int) -> None:
