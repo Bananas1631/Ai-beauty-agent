@@ -204,6 +204,9 @@ class KafkaSettings(EnvSection):
 
     model_config = SettingsConfigDict(env_prefix="KAFKA_")
 
+    # Kafka развёрнута и группа weekly-stats читает события: еженедельный отчёт — из её статистики.
+    # Пока false, отчёт строится SQL-запросами, как до событий (переход без нулей в отчётах)
+    enabled: bool = False
     bootstrap_servers: str = "localhost:9094"
     client_id: str = "beauty-agent"
     # Топики создаёт relay при старте: 6 партиций по salon_id, неделя хранения

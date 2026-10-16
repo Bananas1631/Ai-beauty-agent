@@ -15,6 +15,11 @@ scrape_configs:
     static_configs:
       - targets: ["worker:9100"]
 
+  # Доменные события: relay (очередь outbox) и потребители (lag, DLQ)
+  - job_name: events
+    static_configs:
+      - targets: ["relay:9101", "consumers:9102"]
+
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]

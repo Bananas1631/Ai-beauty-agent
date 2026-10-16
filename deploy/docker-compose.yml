@@ -67,6 +67,23 @@ services:
     healthcheck:
       disable: true
 
+  # Потребители доменных событий: группа weekly-stats копит недельную статистику для отчётов.
+  # Масштабирование — replicas: Kafka раздаст экземплярам 6 партиций и перераспределит при остановке
+  consumers:
+    <<: *app
+    ports: []
+    command: ["python", "-m", "beauty_agent.events.consumers", "weekly-stats"]
+    environment:
+      <<: *app-env
+      METRICS_PORT: "9102"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
   # Только локально: Telegram через long polling (вебхуку нужен публичный HTTPS).
   # Запуск: docker compose -f deploy/docker-compose.yml --profile telegram up -d
   bot:

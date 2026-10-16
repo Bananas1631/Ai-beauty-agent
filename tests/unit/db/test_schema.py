@@ -57,6 +57,8 @@ def test_all_tables_are_registered() -> None:
         "drafts",
         "consents",
         "event_outbox",
+        "processed_events",
+        "salon_week_stats",
     }
 
     assert set(Base.metadata.tables) == expected

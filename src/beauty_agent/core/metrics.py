@@ -82,6 +82,19 @@ OUTBOX_BACKLOG = Gauge(
     namespace=NAMESPACE,
     multiprocess_mode="livemax",
 )
+CONSUMER_LAG = Gauge(
+    "consumer_lag",
+    "Сколько событий группа потребителей ещё не прочитала: растёт 10 минут подряд — алерт",
+    ["group", "topic"],
+    namespace=NAMESPACE,
+    multiprocess_mode="livemax",
+)
+EVENTS_DEAD_LETTERED = Counter(
+    "events_dead_lettered_total",
+    "События, ушедшие в DLQ после всех попыток или не по схеме",
+    ["group", "topic"],
+    namespace=NAMESPACE,
+)
 QUEUE_MESSAGES = Gauge(
     "queue_messages",
     "Сообщений в очереди RabbitMQ в момент сбора",
@@ -110,6 +123,14 @@ def llm_cache(result: str, *, salon_id: str | None = None, saved_rub: Decimal = 
 
 def events_published(count: int) -> None:
     EVENTS_PUBLISHED.inc(count)
+
+
+def consumer_lag(group: str, topic: str, lag: int) -> None:
+    CONSUMER_LAG.labels(group=group, topic=topic).set(lag)
+
+
+def event_dead_lettered(group: str, topic: str) -> None:
+    EVENTS_DEAD_LETTERED.labels(group=group, topic=topic).inc()
 
 
 def outbox_backlog(count: int) -> None:

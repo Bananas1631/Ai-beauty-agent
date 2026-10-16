@@ -23,7 +23,7 @@ from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 
 from beauty_agent.core.config import KafkaSettings, PostgresSettings
 from beauty_agent.core.db import make_engine, make_session_factory
-from beauty_agent.db.models import EventOutbox, Salon
+from beauty_agent.db.models import EventOutbox, ProcessedEvent, Salon, SalonWeekStats
 
 KAFKA_IMAGE = "apache/kafka:3.9.1"  # тот же образ, что в docker-compose
 
@@ -83,7 +83,8 @@ async def committed(migrated: PostgresSettings) -> AsyncIterator[CommittedDb]:
         yield db
     finally:
         async with db.factory() as session:
-            await session.execute(delete(EventOutbox).where(EventOutbox.salon_id.in_(db.created)))
+            for model in (EventOutbox, ProcessedEvent, SalonWeekStats):
+                await session.execute(delete(model).where(model.salon_id.in_(db.created)))
             await session.execute(delete(Salon).where(Salon.id.in_(db.created)))
             await session.commit()
         await engine.dispose()

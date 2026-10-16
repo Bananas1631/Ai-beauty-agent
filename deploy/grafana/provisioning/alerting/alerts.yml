@@ -168,3 +168,60 @@ groups:
               type: threshold
               expression: B
               conditions: [{evaluator: {type: gt, params: [0.8]}}]
+
+      - uid: consumer-lag-growing
+        title: Потребитель событий отстаёт всё больше
+        condition: C
+        noDataState: OK  # нет рядов — потребители не запущены, отставать некому
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: "Lag группы {{ $labels.group }} в {{ $labels.topic }} растёт 10 минут подряд. Что делать — docs/runbook.md"
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # скорость роста lag за 5 минут: >0 на протяжении for: 10m — не догоняет
+              expr: max by (group, topic) (deriv(beauty_agent_consumer_lag[5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{evaluator: {type: gt, params: [0]}}]
+
+      - uid: events-dead-lettered
+        title: События уходят в DLQ
+        condition: C
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: "Группа {{ $labels.group }} отправила события из {{ $labels.topic }} в DLQ — разобрать и перечитать"
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: sum by (group, topic) (increase(beauty_agent_events_dead_lettered_total[15m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{evaluator: {type: gt, params: [0]}}]

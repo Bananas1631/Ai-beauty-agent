@@ -14,7 +14,7 @@ import structlog
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from beauty_agent.db.models import Conversation, OutboundMessage, Salon
+from beauty_agent.db.models import Conversation, OutboundMessage, ProcessedEvent, Salon
 from beauty_agent.domain.salon_settings import SalonSettings
 from beauty_agent.workers.celery_app import celery, run, runtime
 
@@ -22,6 +22,7 @@ logger = structlog.get_logger(__name__)
 
 BATCH = 500
 ORPHAN_OUTBOX_DAYS = 30
+PROCESSED_EVENTS_DAYS = 14  # вдвое больше срока хранения событий в Kafka (7 дней)
 
 
 async def _purge_salon(session_factory: async_sessionmaker[AsyncSession], salon_id: uuid.UUID, cutoff: datetime) -> int:
@@ -64,6 +65,10 @@ async def purge_expired(
                 OutboundMessage.conversation_id.is_(None),
                 OutboundMessage.created_at < now - timedelta(days=ORPHAN_OUTBOX_DAYS),
             )
+        )
+        # Отметки потребителей событий: дубль старше срока хранения Kafka прийти уже не может
+        await session.execute(
+            delete(ProcessedEvent).where(ProcessedEvent.created_at < now - timedelta(days=PROCESSED_EVENTS_DAYS))
         )
         await session.commit()
     return report

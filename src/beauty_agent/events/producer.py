@@ -91,6 +91,10 @@ class EventProducer:
     async def stop(self) -> None:
         await self._producer.stop()
 
+    async def send_raw(self, topic: str, key: bytes | None, value: bytes, headers: list[tuple[str, bytes]]) -> None:
+        """Сообщение как есть — для DLQ: тело и заголовки исходного события плюс причина."""
+        await self._producer.send_and_wait(topic, value=value, key=key, headers=headers)
+
     async def publish(self, events: Sequence[OutgoingEvent]) -> None:
         """Отправить пачку и дождаться подтверждения каждого события.
 

@@ -5,7 +5,9 @@
   иначе — средний чек визитов салона за 90 дней);
 - ответы клиентам вне рабочего времени администраторов — то, что без ИИ ждало бы утра;
 - стоимость LLM на салон — ответы агента и черновики, которые не ушли клиенту.
-Цифры по записям — из аналитики на чистом SQL (db/queries/analytics, AnalyticsRepository).
+С Kafka (KAFKA_ENABLED) цифры — из salon_week_stats, которую копит потребитель событий
+weekly-stats (events/handlers/reports.py), без запросов по сообщениям всех салонов. Без Kafka —
+из аналитики на чистом SQL (db/queries/analytics, AnalyticsRepository).
 Выгрузка для счёта строится по правилу domain/billing.py — тому же, что в договоре.
 """
 
@@ -20,7 +22,7 @@ from sqlalchemy import Time, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from beauty_agent.conversation.notifications import AdminEvent, AdminEventKind, Notifier
-from beauty_agent.db.models import Booking, Draft, Master, Message, Salon, Service
+from beauty_agent.db.models import Booking, Draft, Master, Message, Salon, SalonWeekStats, Service
 from beauty_agent.db.repositories.analytics import AnalyticsRepository
 from beauty_agent.domain.billing import BILLABLE_STATUSES, BillingPeriod, invoice_total
 from beauty_agent.domain.entities import format_rub
@@ -73,11 +75,26 @@ async def average_check(session: AsyncSession, salon: Salon, now: datetime) -> D
     return await analytics.average_check(now - timedelta(days=AVERAGE_CHECK_DAYS), now, timezone=salon.timezone)
 
 
-async def weekly_report(session: AsyncSession, salon: Salon, now: datetime) -> WeeklyReport:
+async def weekly_report(
+    session: AsyncSession, salon: Salon, now: datetime, *, from_events: bool = False
+) -> WeeklyReport:
     tz = ZoneInfo(salon.timezone)
     today = now.astimezone(tz).date()
     end = datetime.combine(today - timedelta(days=today.weekday()), time(), tzinfo=tz)  # понедельник 00:00
     start = end - timedelta(days=7)
+    if from_events:
+        stats = await session.scalar(
+            select(SalonWeekStats).where(SalonWeekStats.salon_id == salon.id, SalonWeekStats.week_start == start.date())
+        )
+        return WeeklyReport(
+            salon_name=salon.name,
+            first_day=start,
+            ai_bookings=stats.ai_bookings if stats else 0,
+            average_check_rub=await average_check(session, salon, now),
+            answers=stats.answers if stats else 0,
+            off_hours_answers=stats.off_hours_answers if stats else 0,
+            llm_cost_rub=stats.llm_cost_rub if stats else Decimal(0),
+        )
     config = salon.config
     share = await AnalyticsRepository(session, salon.id).ai_share(
         start, end, timezone=salon.timezone, work_start=config.work_start, work_end=config.work_end
@@ -119,12 +136,16 @@ async def weekly_report(session: AsyncSession, salon: Salon, now: datetime) -> W
 
 
 async def send_weekly_reports(
-    session_factory: async_sessionmaker[AsyncSession], notifier: Notifier, *, now: datetime | None = None
+    session_factory: async_sessionmaker[AsyncSession],
+    notifier: Notifier,
+    *,
+    now: datetime | None = None,
+    from_events: bool = False,
 ) -> int:
     now = now or datetime.now(UTC)
     async with session_factory() as session:
         salons = list(await session.scalars(select(Salon).where(Salon.is_demo.is_(False))))
-        reports = [(salon.id, await weekly_report(session, salon, now)) for salon in salons]
+        reports = [(salon.id, await weekly_report(session, salon, now, from_events=from_events)) for salon in salons]
     for salon_id, report in reports:
         await notifier.notify(AdminEvent(AdminEventKind.WEEKLY_REPORT, str(salon_id), None, report.text()))
     logger.info("weekly_reports_sent", salons=len(reports))
@@ -190,5 +211,7 @@ def invoice_csv(lines: list[InvoiceLine], timezone: str) -> str:
 @celery.task(name="periodic.weekly_report")
 def weekly_report_task() -> int:
     current = runtime()
-    sent: int = run(send_weekly_reports(current.session_factory, current.notifier))
+    sent: int = run(
+        send_weekly_reports(current.session_factory, current.notifier, from_events=current.settings.kafka.enabled)
+    )
     return sent
