@@ -93,6 +93,7 @@ def _default_prices() -> dict[str, tuple[Decimal, Decimal]]:
         "gigachat-2-lite": (Decimal("0.20"), Decimal("0.20")),
         "gigachat-2-max": (Decimal("1.95"), Decimal("1.95")),
         "bge-m3": (Decimal("0.01"), Decimal(0)),
+        "qwen2.5-vl": (Decimal("0.10"), Decimal("0.30")),
     }
 
 
@@ -134,6 +135,11 @@ class LLMSettings(EnvSection):
     semantic_cache: bool = False
     # Векторы сообщений клиентов с согласием — для поиска по истории (workers/embeddings.py)
     history_embeddings: bool = True
+    # Фото-референсы (workers/photo.py): мультимодальная модель, OpenAI-совместимый API с картинками.
+    # Без своего адреса и ключа — Cloud.ru Foundation Models с LLM_CLOUDRU_API_KEY; модель уточнить в каталоге
+    vision_model: str = "Qwen/Qwen2.5-VL-72B-Instruct"
+    vision_base_url: str = ""
+    vision_api_key: SecretStr | None = None
 
 
 class YclientsSettings(EnvSection):

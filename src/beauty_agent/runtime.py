@@ -19,7 +19,7 @@ from beauty_agent.adapters.channels.vk import VkApi
 from beauty_agent.adapters.crm.factory import ProviderRegistry
 from beauty_agent.adapters.latency import SlowLLM
 from beauty_agent.adapters.llm.base import LLMClient
-from beauty_agent.adapters.llm.models import build_clients, build_embedder
+from beauty_agent.adapters.llm.models import build_clients, build_embedder, build_vision
 from beauty_agent.adapters.llm.offline import OfflineLLM
 from beauty_agent.agent.cache import AnswerCache
 from beauty_agent.agent.state import StateStore
@@ -28,6 +28,7 @@ from beauty_agent.conversation.handoff import Handoff
 from beauty_agent.conversation.inbound import InboundGate, InboundProcessor, MessageQueue
 from beauty_agent.conversation.notifications import LogNotifier, Notifier
 from beauty_agent.conversation.outbox import Outbox
+from beauty_agent.conversation.photo import PhotoProcessor
 from beauty_agent.conversation.privacy import PrivacyService
 from beauty_agent.conversation.service import ConversationService
 from beauty_agent.conversation.shadow_mode import DraftPublisher, ShadowMode
@@ -38,6 +39,7 @@ from beauty_agent.core.resilience import RedisTokenBucket
 from beauty_agent.core.security import Security
 from beauty_agent.core.tracing import Tracer, make_tracer
 from beauty_agent.domain.enums import Channel
+from beauty_agent.rag.safe_http import make_safe_client
 
 YCLIENTS_RATE_KEY = "ba:yclients:rps"  # лимит YCLIENTS — на IP сервера, общий для всех процессов
 
@@ -58,6 +60,9 @@ class NullQueue:
         return None
 
     async def reindex_site(self, *args: object) -> None:
+        return None
+
+    async def process_photo(self, *args: object) -> None:
         return None
 
 
@@ -87,6 +92,7 @@ class Runtime:
     senders: dict[Channel, ChannelSender] = field(default_factory=dict)
     inbound: InboundGate | None = None
     processor: InboundProcessor | None = None
+    photo: PhotoProcessor | None = None
     admin_bot: AdminBot | None = None
 
     async def close(self) -> None:
@@ -98,6 +104,11 @@ class Runtime:
                 await close()
         await self.http.aclose()
         await self.max_http.aclose()
+        if self.photo is not None:
+            await self.photo.http.aclose()
+            close_vision = getattr(self.photo.vision, "aclose", None)
+            if close_vision is not None:
+                await close_vision()
         await self.redis.aclose()
         await self.engine.dispose()
 
@@ -193,7 +204,19 @@ def create_runtime(
         senders=senders,
     )
     runtime.inbound = InboundGate(redis, debouncer, queue)
-    runtime.processor = InboundProcessor(session_factory, debouncer, conversations, outbox, notifier, shadow)
+    runtime.processor = InboundProcessor(
+        session_factory, debouncer, conversations, outbox, notifier, shadow, queue=queue
+    )
+    runtime.photo = PhotoProcessor(
+        session_factory=session_factory,
+        security=security,
+        conversations=conversations,
+        outbox=outbox,
+        telegram=telegram,
+        vision=build_vision(settings.llm),
+        http=make_safe_client(timeout_s=20.0),
+        shadow=shadow,
+    )
     if admin_api is not None:
         runtime.admin_bot = AdminBot(
             api=admin_api,

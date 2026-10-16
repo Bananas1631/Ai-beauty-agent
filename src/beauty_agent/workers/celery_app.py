@@ -120,6 +120,7 @@ celery = Celery(
         "beauty_agent.workers.reports",
         "beauty_agent.workers.indexing",
         "beauty_agent.workers.embeddings",
+        "beauty_agent.workers.photo",
     ],
 )
 configure(celery, get_settings())

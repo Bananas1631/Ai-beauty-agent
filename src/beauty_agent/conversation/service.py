@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from beauty_agent.adapters.crm.factory import ProviderRegistry
 from beauty_agent.adapters.llm.base import LLMClient
+from beauty_agent.adapters.llm.vision import PhotoDescription
 from beauty_agent.agent.budget import BUDGET_EXCEEDED_ANSWER, DailyBudget
 from beauty_agent.agent.cache import AnswerCache
 from beauty_agent.agent.loop import HANDOFF_ANSWER, Agent, AgentResult
@@ -71,6 +72,7 @@ from beauty_agent.rag.retriever import HybridRetriever, RagSalonInfo
 logger = structlog.get_logger(__name__)
 
 HANDED_OFF_ANSWER = "Ваш вопрос уже у администратора — он ответит в ближайшее рабочее время."
+PHOTO_HANDOFF_ANSWER = "Спасибо за фото! Передала его администратору — он подскажет, какая услуга подойдёт."
 LOCK_TTL_S = 120.0  # дольше самого медленного ответа агента: 6 шагов по 15 секунд с запасом
 LOCK_WAIT_S = 60.0
 
@@ -98,6 +100,9 @@ class IncomingMessage:
     reply_to: ReplyRoute | None = None  # мессенджеры: ответ уходит через outbox
     # REST API: сообщение уже сохранено accept() со статусом «в очереди» — ответить на него
     stored_message_id: uuid.UUID | None = None
+    photo: PhotoDescription | None = None  # фото-референс, разобранный workers/photo.py
+    # Фото, которое агент не разбирает (режим admin, модель не уверена): сразу администратору
+    photo_handoff_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,6 +371,28 @@ class ConversationService:
                 await self._answer(session, conversations, conversation_id, message, answer, question_id=stored)
             return Reply(answer, conversation_id, handed_off=True)
 
+        if message.photo_handoff_reason is not None:
+            delivery_key, draft_id = await self._answer(
+                session,
+                conversations,
+                conversation_id,
+                message,
+                PHOTO_HANDOFF_ANSWER,
+                question=text,
+                question_id=stored,
+            )
+            await hand_off(
+                session,
+                self.notifier,
+                salon.id,
+                conversation_id,
+                message.photo_handoff_reason,
+                kind=AdminEventKind.PHOTO_REFERENCE,
+            )
+            return Reply(
+                PHOTO_HANDOFF_ANSWER, conversation_id, handed_off=True, outbox_key=delivery_key, draft_id=draft_id
+            )
+
         config = salon.config
         if await self.budget.exceeded(str(salon.id), config.daily_llm_budget_rub):
             return await self._budget_exceeded(session, conversations, conversation_id, message, text, stored)
@@ -420,6 +447,7 @@ class ConversationService:
                 client_id=client.id,
                 release=release,
                 knowledge_version=KnowledgeRepository(tool_session, salon.id).version,
+                photo=message.photo,
             )
             agent = Agent(
                 router,

@@ -79,6 +79,9 @@ poetry run python -m scripts.onboard_salon scripts/onboarding.example.toml
 - `/token` в админ-боте выдаёт JWT для API инбокса (`/api/v1/admin/conversations`) на 8 часов.
 - Сайт салона изменился — `POST /api/v1/salons/{id}/reindex` с тем же токеном: ответ 202 и адрес
   `GET /api/v1/jobs/{id}` с прогрессом. Сайт берётся из настройки салона `site_url`.
+- Фото «хочу вот так» по умолчанию уходят администратору (`photo_mode=admin`). Подбор услуги
+  по фото (`photo_mode=guess`) включают после замера точности на 30 фото-референсах
+  (`evals/datasets/photos/README.md`, нужно не меньше 80%).
 - Поиск по истории: `GET /api/v1/admin/search?q=наращивание&date_from=2026-09-01&date_to=2026-09-30` —
   сообщения клиентов с согласием на обработку ПДн, ближайшие по смыслу.
 - Голосовые и файлы клиент получает вежливый ответ, администратор — уведомление.

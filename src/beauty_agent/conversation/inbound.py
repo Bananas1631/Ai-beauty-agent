@@ -4,6 +4,10 @@
 склейки и отложенная задача в очередь. Обработка — в воркере Celery: пачка склейки → сервис диалога →
 доставка ответа через outbox (в теневом режиме — черновик в админ-бот). Голосовые, стикеры и файлы
 получают вежливый ответ, администратор — уведомление.
+
+Фото-референс: в режиме салона guess клиент сразу получает «Смотрю фото…», а фото разбирает
+фоновая задача (conversation/photo.py); в режиме admin (по умолчанию) диалог с фото сразу уходит
+администратору. Подпись к фото и соседние сообщения пачки идут вместе с фото.
 """
 
 import uuid
@@ -18,15 +22,19 @@ from beauty_agent.adapters.channels.base import ChannelUpdate, UpdateKind
 from beauty_agent.conversation.debounce import Debouncer
 from beauty_agent.conversation.notifications import AdminEvent, AdminEventKind, Notifier
 from beauty_agent.conversation.outbox import Outbox, enqueue_outbound, outbox_key
+from beauty_agent.conversation.photo import PHOTO_MARKER
 from beauty_agent.conversation.service import ConversationService, IncomingMessage, ReplyRoute
 from beauty_agent.conversation.shadow_mode import ShadowMode
 from beauty_agent.core.redis import key
 from beauty_agent.db.repositories.channels import ChannelAccountsRepository
+from beauty_agent.domain.enums import PhotoMode
 
 logger = structlog.get_logger(__name__)
 
 DEDUPE_TTL_S = 24 * 3600
 START_TEXT = "Здравствуйте!"
+PHOTO_ACK_ANSWER = "Смотрю фото — минутку!"
+PHOTO_TO_ADMIN_REASON = "Клиент прислал фото-референс — посмотрите в чате и ответьте"
 UNSUPPORTED_ANSWER = (
     "Пока я понимаю только текстовые сообщения — напишите, пожалуйста, словами. Голосовое передам администратору."
 )
@@ -45,6 +53,10 @@ class MessageQueue(Protocol):
 
     async def process_chat(self, salon_id: uuid.UUID, message_id: uuid.UUID) -> None:
         """Сообщение из REST API — ответ агента в воркере (workers/chat.py)."""
+        ...
+
+    async def process_photo(self, account_id: uuid.UUID, update: dict[str, Any], text: str) -> None:
+        """Фото-референс — разбор мультимодальной моделью в воркере (workers/photo.py)."""
         ...
 
     async def reindex_site(self, salon_id: uuid.UUID, job_id: uuid.UUID) -> None:
@@ -82,6 +94,7 @@ class InboundProcessor:
     outbox: Outbox
     notifier: Notifier
     shadow: ShadowMode | None = field(default=None)
+    queue: MessageQueue | None = field(default=None)  # для фото в режиме guess
 
     async def dead_letter(self, account_id: uuid.UUID) -> None:
         """Сообщение не обработано после всех повторов: уведомить администраторов салона."""
@@ -113,17 +126,24 @@ class InboundProcessor:
             await self.notifier.notify(
                 AdminEvent(AdminEventKind.UNSUPPORTED_MESSAGE, str(salon.id), None, "Клиент прислал голосовое или файл")
             )
+        photo = next((item for item in reversed(updates) if item.kind is UpdateKind.PHOTO and item.photo), None)
+        if photo is not None and salon.config.photo_mode is PhotoMode.GUESS and self.queue is not None:
+            await self._acknowledge_photo(salon.id, account.id, chat_id, photo)
+            await self.queue.process_photo(account.id, photo.to_json(), "\n".join(texts))
+            await self.debouncer.done(account_id, chat_id, token)
+            return
         route = ReplyRoute(account.id, chat_id, dict(last.route))
-        if texts:
+        if texts or photo is not None:
             reply = await self.conversations.handle(
                 IncomingMessage(
                     salon=salon,
                     channel=last.channel,
                     external_user_id=last.user_id,
-                    text="\n".join(texts),
+                    text="\n".join([*texts, PHOTO_MARKER] if photo is not None else texts),
                     external_message_id=last.message_id,
                     client_name=last.user_name,
                     reply_to=route,
+                    photo_handoff_reason=PHOTO_TO_ADMIN_REASON if photo is not None else None,
                 )
             )
             delivery_key = reply.outbox_key
@@ -148,3 +168,23 @@ class InboundProcessor:
             status = await self.outbox.deliver(salon.id, delivery_key)
             logger.info("reply_delivered", channel=last.channel.value, status=status.value, messages=len(updates))
         await self.debouncer.done(account_id, chat_id, token)
+
+    async def _acknowledge_photo(
+        self, salon_id: uuid.UUID, account_id: uuid.UUID, chat_id: str, photo: ChannelUpdate
+    ) -> None:
+        """«Смотрю фото…» — сразу, пока модель разбирает фото в фоне."""
+        delivery_key = outbox_key(photo.channel, account_id, chat_id, f"photo-ack:{photo.message_id}")
+        async with self.session_factory() as session:
+            await enqueue_outbound(
+                session,
+                salon_id=salon_id,
+                account_id=account_id,
+                conversation_id=None,
+                channel=photo.channel,
+                chat_id=chat_id,
+                route=dict(photo.route),
+                text=PHOTO_ACK_ANSWER,
+                dedupe_key=delivery_key,
+            )
+            await session.commit()
+        await self.outbox.deliver(salon_id, delivery_key)

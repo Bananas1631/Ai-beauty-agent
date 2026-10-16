@@ -17,6 +17,7 @@ class AdminEventKind(StrEnum):
     BUDGET_EXCEEDED = "budget_exceeded"
     CLIENT_MESSAGE = "client_message"  # клиент пишет в диалог, который ведёт администратор
     UNSUPPORTED_MESSAGE = "unsupported_message"  # голосовое, стикер, файл
+    PHOTO_REFERENCE = "photo_reference"  # фото «хочу вот так», которое агент не разбирает сам
     DEAD_LETTER = "dead_letter"  # сообщение не обработано после всех повторов
     WEEKLY_REPORT = "weekly_report"  # еженедельный отчёт салону в рублях
 

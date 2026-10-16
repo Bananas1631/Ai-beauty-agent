@@ -9,7 +9,7 @@ from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from beauty_agent.domain.enums import CrmKind, ReplyMode
+from beauty_agent.domain.enums import CrmKind, PhotoMode, ReplyMode
 
 _ORIGIN = re.compile(r"^https://[a-z0-9.-]+(:\d{1,5})?$")
 _SITE = re.compile(r"^https?://[\w.-]+(:\d{1,5})?(/\S*)?$", re.IGNORECASE)  # \w — и кириллические домены
@@ -48,6 +48,9 @@ class SalonSettings(BaseModel):
     # Сайт для базы знаний (rag/ingest.py): переиндексация — POST /api/v1/salons/{id}/reindex.
     # Внутренние адреса отсекаются при обходе (rag/safe_http.py), здесь — только формат
     site_url: str | None = Field(None, max_length=2048)
+    # Фото-референсы: admin — администратору; guess — подбор услуги по фото. guess включают,
+    # только если точность на evals/datasets/photos не ниже 80% (docs/adr/012-photo-references.md)
+    photo_mode: PhotoMode = PhotoMode.ADMIN
 
     @field_validator("site_url")
     @classmethod

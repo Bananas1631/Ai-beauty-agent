@@ -11,7 +11,8 @@
 - Сервер API работает на сертификате Минцифры: путь к корневому сертификату — MAX_CA_BUNDLE
   (docs/integrations/max.md). Проверку TLS не отключаем.
 - Принимаются только личные диалоги (chat_type = dialog): группы и каналы агенту не нужны.
-- Вложения поле за полем не разбираются: голосовые, фото и файлы — UNSUPPORTED, вежливый ответ.
+- Фото (вложение image) — PHOTO со ссылкой на файл и подписью; голосовые и файлы — UNSUPPORTED,
+  вежливый ответ.
 """
 
 import re
@@ -86,7 +87,10 @@ def parse_update(payload: dict[str, Any]) -> ChannelUpdate | None:
     if not mid or chat_id is None:
         return None
     text = body.get("text")
-    if isinstance(text, str) and text.strip():
+    photo = _image_url(body.get("attachments"))
+    if photo is not None:
+        kind = UpdateKind.PHOTO
+    elif isinstance(text, str) and text.strip():
         kind = UpdateKind.START if text.strip().lower() in {"/start", "начать"} else UpdateKind.TEXT
     else:
         kind = UpdateKind.UNSUPPORTED
@@ -97,9 +101,21 @@ def parse_update(payload: dict[str, Any]) -> ChannelUpdate | None:
         user_id=str(sender["user_id"]),
         message_id=str(mid),
         kind=kind,
-        text=clip(text) if kind is not UpdateKind.UNSUPPORTED else None,
+        text=clip(text) if kind is not UpdateKind.UNSUPPORTED and isinstance(text, str) and text.strip() else None,
         user_name=_user_name(sender),
+        photo=photo,
     )
+
+
+def _image_url(attachments: object) -> str | None:
+    if not isinstance(attachments, list):
+        return None
+    for attachment in attachments:
+        if isinstance(attachment, dict) and attachment.get("type") == "image":
+            url = str((attachment.get("payload") or {}).get("url") or "")
+            if url.startswith("https://"):
+                return url
+    return None
 
 
 class MaxBotApi:

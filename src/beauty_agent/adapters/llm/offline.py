@@ -109,6 +109,8 @@ class OfflineLLM:
 
         if _HUMAN.search(lowered) or _CANCEL.search(lowered):
             return self._call("handoff_to_admin", {"reason": "Клиент просит администратора"}, tokens)
+        if "[фото-референс:" in lowered:
+            return self._call("photo_services", {}, tokens)
         if _GREETING.match(lowered):
             return self._text("Здравствуйте! Подскажите, на какую услугу хотите записаться?", tokens)
         if _INFO.search(lowered):
@@ -167,6 +169,16 @@ class OfflineLLM:
             if result.get("status") == "confirmed":
                 return self._text(f"Записала вас: {result['when']}, мастер {result['master']}. Ждём вас!", tokens)
             return self._text(str(result.get("message", "Передала заявку администратору.")), tokens)
+        if name == "photo_services":
+            found = result.get("found") or []
+            if not found:
+                return self._call("handoff_to_admin", {"reason": "Не нашла услугу по фото"}, tokens)
+            first = found[0]
+            return self._text(
+                f"Похоже на {result.get('photo', 'вашу работу')} — это «{first['name']}», {first['price']}. "
+                "Подобрать время?",
+                tokens,
+            )
         if name == "salon_info":
             fragments = result.get("fragments") or []
             text = fragments[0]["text"] if fragments else "Уточню у администратора и вернусь с ответом."

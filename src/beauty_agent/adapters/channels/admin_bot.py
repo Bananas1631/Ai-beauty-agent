@@ -46,7 +46,12 @@ MAX_PREVIEW = 1500
 _CODE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
 _DRAFT_CALLBACK = re.compile(r"^d:([sem]):([0-9a-f-]{36})$")
 _RETURN_CALLBACK = re.compile(r"^h:r:([0-9a-f-]{36})$")
-_CONVERSATION_EVENTS = {AdminEventKind.HANDOFF, AdminEventKind.CLIENT_MESSAGE, AdminEventKind.BUDGET_EXCEEDED}
+_CONVERSATION_EVENTS = {
+    AdminEventKind.HANDOFF,
+    AdminEventKind.CLIENT_MESSAGE,
+    AdminEventKind.BUDGET_EXCEEDED,
+    AdminEventKind.PHOTO_REFERENCE,
+}
 
 HELP = (
     "Это бот администратора салона.\n"
@@ -175,6 +180,7 @@ class AdminBotNotifier:
             AdminEventKind.BUDGET_EXCEEDED: "Лимит расходов на ИИ исчерпан",
             AdminEventKind.BOOKING_PENDING: "Подтвердите запись вручную",
             AdminEventKind.UNSUPPORTED_MESSAGE: "Голосовое или файл от клиента",
+            AdminEventKind.PHOTO_REFERENCE: "Клиент прислал фото — посмотрите в чате",
             AdminEventKind.DEAD_LETTER: "Сообщение клиента не обработано",
             AdminEventKind.WEEKLY_REPORT: "Отчёт за неделю",
         }

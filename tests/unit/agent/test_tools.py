@@ -50,6 +50,7 @@ def test_tools_with_strict_schemas() -> None:
         "my_bookings",
         "cancel_booking",
         "reschedule_booking",
+        "photo_services",
         "handoff_to_admin",
     ]
     for spec in specs:

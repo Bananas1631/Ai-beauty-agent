@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from rapidfuzz import fuzz
 
 from beauty_agent.adapters.crm.base import BookingProvider
+from beauty_agent.adapters.llm.vision import PhotoDescription
 from beauty_agent.agent.registry import Tool, ToolContext, ToolRegistry
 from beauty_agent.catalog.importer import salon_card_text
 from beauty_agent.domain.booking_engine.offers import Offer, PartOfDay
@@ -172,6 +173,10 @@ class SalonInfoArgs(StrictArgs):
     question: str = Field(min_length=2, max_length=200, description="Вопрос клиента о салоне: адрес, часы, оплата…")
 
 
+class PhotoServicesArgs(StrictArgs):
+    """Без аргументов: описание фото уже в контексте, модель не пересказывает его своими словами."""
+
+
 class HandoffArgs(StrictArgs):
     reason: str = Field(min_length=2, max_length=300, description="Коротко, почему нужен администратор")
 
@@ -224,6 +229,33 @@ async def find_service(args: FindServiceArgs, ctx: ToolContext) -> dict[str, Any
             "categories": categories,
         }
     return {"found": [_service_json(service) for service in found]}
+
+
+def match_photo(photo: PhotoDescription, services: list[ServiceInfo], *, limit: int = 3) -> list[ServiceInfo]:
+    """Услуги каталога под описание фото: название услуги и техника, для ногтей с рисунком — дизайн."""
+    query = " ".join(part for part in (photo.service, photo.technique) if part)
+    found = search_services(services, query, limit=limit)
+    if photo.category == "nails" and photo.design_complexity in ("simple", "complex"):
+        design = [service for service in search_services(services, "дизайн ногтей", limit=1) if service not in found]
+        found = (found + design)[: limit + 1]  # дизайн обычно отдельная услуга — показываем и её
+    return found
+
+
+async def photo_services(args: PhotoServicesArgs, ctx: ToolContext) -> dict[str, Any]:
+    if ctx.photo is None:
+        return {"error": "В этом сообщении нет фото"}
+    found = match_photo(ctx.photo, await ctx.catalog.services())
+    if not found:
+        return {
+            "photo": ctx.photo.summary,
+            "found": [],
+            "hint": "Похожей услуги в каталоге нет. Не угадывай: предложи передать фото администратору.",
+        }
+    return {
+        "photo": ctx.photo.summary,
+        "found": [_service_json(service) for service in found],
+        "hint": "Скажи, на что похоже фото, назови услугу и цену из found и предложи подобрать время.",
+    }
 
 
 async def masters_for_service(args: MastersArgs, ctx: ToolContext) -> dict[str, Any]:
@@ -410,6 +442,12 @@ TOOLS: tuple[Tool, ...] = (
         "Вызывать только после явного подтверждения клиента.",
         RescheduleBookingArgs,
         reschedule_booking,
+    ),
+    Tool(
+        "photo_services",
+        "Услуги каталога с ценами по фото-референсу клиента. Вызывать, когда в сообщении есть [Фото-референс: …].",
+        PhotoServicesArgs,
+        photo_services,
     ),
     Tool("handoff_to_admin", "Передать диалог живому администратору.", HandoffArgs, handoff_to_admin),
 )

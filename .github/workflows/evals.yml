@@ -16,6 +16,8 @@ on:
       - "src/beauty_agent/rag/**"
       - "src/beauty_agent/adapters/llm/**"
       - "src/beauty_agent/domain/booking_engine/**"
+      - "src/beauty_agent/media/**"
+      - "src/beauty_agent/conversation/photo.py"
       - "evals/**"
   schedule:
     - cron: "0 23 * * *"  # 02:00 МСК
@@ -69,6 +71,9 @@ jobs:
           --output evals-report.json
       - name: Quality gate
         run: poetry run python -m evals.gate --report evals-report.json --baseline evals/reports/baseline.json
+      # Фото-референсы (ADR 012): подбор услуги по эталонным описаниям — без снимков и сети
+      - name: Photo references (offline)
+        run: poetry run python -m evals.photo_run --offline --no-report
       # Кэш ответов (ADR 011): точный включён в проде, семантический — эксперимент. Оба должны
       # держать те же пороги, что прогон без кэша; иначе кэш выключают.
       - name: Evals with answer cache

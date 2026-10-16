@@ -24,6 +24,7 @@ class RecordingQueue:
         self.synced: list[tuple[uuid.UUID, str]] = []
         self.chats: list[tuple[uuid.UUID, uuid.UUID]] = []
         self.reindexed: list[tuple[uuid.UUID, uuid.UUID]] = []
+        self.photos: list[tuple[uuid.UUID, dict[str, Any], str]] = []
 
     async def schedule(self, account_id: uuid.UUID, chat_id: str, token: str, *, delay_s: float) -> None:
         self.scheduled.append((account_id, chat_id, token))
@@ -39,6 +40,9 @@ class RecordingQueue:
 
     async def reindex_site(self, salon_id: uuid.UUID, job_id: uuid.UUID) -> None:
         self.reindexed.append((salon_id, job_id))
+
+    async def process_photo(self, account_id: uuid.UUID, update: dict[str, Any], text: str) -> None:
+        self.photos.append((account_id, update, text))
 
 
 class RecordingSender:

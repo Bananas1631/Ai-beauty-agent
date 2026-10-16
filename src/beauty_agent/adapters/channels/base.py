@@ -17,7 +17,8 @@ MAX_TEXT_CHARS = 4000
 class UpdateKind(StrEnum):
     TEXT = "text"
     START = "start"  # /start, «Начать» — первое касание
-    UNSUPPORTED = "unsupported"  # голосовое, стикер, фото, файл
+    PHOTO = "photo"  # фото-референс; подпись — в text
+    UNSUPPORTED = "unsupported"  # голосовое, стикер, файл
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,7 @@ class ChannelUpdate:
     text: str | None = None
     user_name: str | None = None
     route: dict[str, str] = field(default_factory=dict)  # параметры ответа: business_connection_id, peer_id
+    photo: str | None = None  # file_id Telegram или https-ссылка VK и MAX; само фото не хранится
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -52,6 +54,7 @@ class ChannelUpdate:
             text=data.get("text"),
             user_name=data.get("user_name"),
             route=dict(data.get("route") or {}),
+            photo=data.get("photo"),
         )
 
 

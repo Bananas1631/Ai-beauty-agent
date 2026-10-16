@@ -14,6 +14,7 @@
 from beauty_agent.adapters.llm.base import FREE, LLMClient, ModelPrice
 from beauty_agent.adapters.llm.gigachat import GigaChatClient
 from beauty_agent.adapters.llm.openai_compat import OpenAICompatClient
+from beauty_agent.adapters.llm.vision import OpenAICompatVision
 from beauty_agent.core.config import LLMSettings
 from beauty_agent.rag.embeddings import EmbeddingsClient, HashingEmbeddings, OpenAICompatEmbeddings
 
@@ -72,6 +73,24 @@ def build_clients(settings: LLMSettings) -> dict[str, LLMClient]:
             timeout_s=settings.timeout_s,
         )
     return clients
+
+
+def build_vision(settings: LLMSettings) -> OpenAICompatVision | None:
+    """Модель для фото-референсов: свой сервер (vLLM) или Cloud.ru; без ключей — None (фото — администратору)."""
+    if settings.vision_base_url and settings.vision_api_key is not None:
+        base_url, api_key = settings.vision_base_url, settings.vision_api_key.get_secret_value()
+    elif settings.cloudru_api_key is not None:
+        base_url, api_key = settings.cloudru_base_url, settings.cloudru_api_key.get_secret_value()
+    else:
+        return None
+    return OpenAICompatVision(
+        model_key="qwen2.5-vl",
+        model=settings.vision_model,
+        base_url=base_url,
+        api_key=api_key,
+        price=price_of(settings, "qwen2.5-vl"),
+        timeout_s=max(settings.timeout_s, 60.0),
+    )
 
 
 def build_embedder(settings: LLMSettings) -> EmbeddingsClient:

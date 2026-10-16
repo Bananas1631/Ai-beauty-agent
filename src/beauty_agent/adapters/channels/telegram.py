@@ -2,7 +2,9 @@
 
 - Вебхук проверяет secret_token в заголовке X-Telegram-Bot-Api-Secret-Token (api/v1/webhooks.py).
 - Принимаются только личные чаты: группы и каналы агенту не нужны.
-- Голосовые, стикеры, фото и файлы — UNSUPPORTED: клиенту вежливый ответ, администратору уведомление.
+- Фото — PHOTO с file_id самого крупного размера до 10 МБ и подписью; скачивается в воркере
+  через getFile (workers/photo.py). Голосовые, стикеры и файлы — UNSUPPORTED: клиенту вежливый
+  ответ, администратору уведомление.
 - Режим Telegram Business (бот отвечает от имени аккаунта салона) — в telegram_business.py.
 Токен бота стоит в пути URL, поэтому проверяется по формату и не пишется в логи.
 """
@@ -22,6 +24,7 @@ from beauty_agent.adapters.channels.base import (
 )
 from beauty_agent.adapters.channels.telegram_business import business_client_message
 from beauty_agent.domain.enums import Channel
+from beauty_agent.media.images import MAX_PHOTO_BYTES, BadPhotoError
 
 API_URL = "https://api.telegram.org"
 MAX_MESSAGE_CHARS = 4096
@@ -51,7 +54,11 @@ def parse_update(payload: dict[str, Any]) -> ChannelUpdate | None:
     if chat.get("type") != "private" or sender.get("is_bot"):
         return None
     text = message.get("text")
-    if isinstance(text, str) and text.strip():
+    photo = _largest_photo(message.get("photo"))
+    if photo is not None:
+        kind = UpdateKind.PHOTO
+        text = message.get("caption")
+    elif isinstance(text, str) and text.strip():
         kind = UpdateKind.START if text.strip().startswith("/start") else UpdateKind.TEXT
     else:
         kind = UpdateKind.UNSUPPORTED
@@ -67,10 +74,26 @@ def parse_update(payload: dict[str, Any]) -> ChannelUpdate | None:
         user_id=str(sender.get("id", chat["id"])),
         message_id=str(message["message_id"]),
         kind=kind,
-        text=clip(text) if kind is not UpdateKind.UNSUPPORTED else None,
+        text=clip(text) if kind is not UpdateKind.UNSUPPORTED and isinstance(text, str) else None,
         user_name=(sender.get("first_name") or None),
         route=route,
+        photo=photo,
     )
+
+
+def _largest_photo(sizes: object) -> str | None:
+    """file_id самого крупного размера не больше 10 МБ: Telegram присылает несколько размеров одного фото."""
+    if not isinstance(sizes, list):
+        return None
+    fitting = [
+        size
+        for size in sizes
+        if isinstance(size, dict) and size.get("file_id") and int(size.get("file_size") or 0) <= MAX_PHOTO_BYTES
+    ]
+    if not fitting:
+        return None
+    best = max(fitting, key=lambda size: int(size.get("width") or 0) * int(size.get("height") or 0))
+    return str(best["file_id"])
 
 
 class TelegramBotApi:
@@ -104,6 +127,32 @@ class TelegramBotApi:
             payload["business_connection_id"] = connection  # ответ от имени аккаунта салона
         result = await self.call(str(credentials.get("token", "")), "sendMessage", payload)
         return str(result.get("message_id")) if isinstance(result, dict) else None
+
+    # ------------------------------------------------------------- фото
+
+    async def download_file(self, token: str, file_id: str, *, max_bytes: int = MAX_PHOTO_BYTES) -> bytes:
+        """getFile → файл по адресу api.telegram.org/file/bot<токен>/<путь>, с лимитом размера."""
+        result = await self.call(token, "getFile", {"file_id": file_id})
+        if not isinstance(result, dict) or not result.get("file_path"):
+            raise BadPhotoError("Telegram не отдал файл")
+        if int(result.get("file_size") or 0) > max_bytes:
+            raise BadPhotoError("Фото больше 10 МБ")
+        path = str(result["file_path"])
+        if ".." in path or path.startswith("/"):
+            raise BadPhotoError("Неожиданный путь файла")
+        url = f"{self.base_url}/file/bot{check_token(token)}/{path}"
+        try:
+            async with self.http.stream("GET", url, timeout=30.0) as response:
+                if response.status_code != 200:
+                    raise BadPhotoError(f"Telegram: файл не скачался, HTTP {response.status_code}")
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > max_bytes:
+                        raise BadPhotoError("Фото больше 10 МБ")
+        except httpx.HTTPError as exc:
+            raise ChannelUnavailableError(f"Telegram недоступен: {type(exc).__name__}") from exc
+        return bytes(body)
 
     # ------------------------------------------------------------- вебхук и polling
 

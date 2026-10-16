@@ -18,6 +18,7 @@ import structlog
 from pydantic import BaseModel, ValidationError
 
 from beauty_agent.adapters.llm.base import ToolCallRequest, ToolSpec
+from beauty_agent.adapters.llm.vision import PhotoDescription
 from beauty_agent.agent.tokens import compact_json
 from beauty_agent.domain.booking_engine.service import BookingService
 from beauty_agent.domain.entities import MasterInfo, ServiceInfo
@@ -60,6 +61,8 @@ class ToolContext:
     release: Callable[[], Awaitable[None]] | None = None
     # Версия базы знаний салона — часть ключа кэша ответов (agent/cache.py); None — кэш не используется
     knowledge_version: Callable[[], Awaitable[str]] | None = None
+    # Описание фото-референса из этого сообщения (workers/photo.py) — для инструмента photo_services
+    photo: PhotoDescription | None = None
 
 
 Handler = Callable[[Any, ToolContext], Awaitable[dict[str, Any]]]

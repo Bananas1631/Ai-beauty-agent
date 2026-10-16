@@ -1,7 +1,5 @@
 """Мессенджеры на настоящих PostgreSQL и Redis: вебхуки, склейка, сервис диалога и outbox."""
 
-import uuid
-
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
@@ -19,9 +17,7 @@ from tests.channel_helpers import (
 
 from beauty_agent.adapters.channels.base import ChannelRejectedError, ChannelUnavailableError
 from beauty_agent.adapters.crm.factory import ProviderRegistry
-from beauty_agent.adapters.crm.fake import FakeCRM
 from beauty_agent.adapters.llm.fake import ScriptedLLM, reply
-from beauty_agent.catalog.importer import import_catalog
 from beauty_agent.conversation.debounce import Debouncer
 from beauty_agent.conversation.inbound import UNSUPPORTED_ANSWER, InboundGate, InboundProcessor
 from beauty_agent.conversation.notifications import AdminEventKind
@@ -31,25 +27,7 @@ from beauty_agent.core.config import YclientsSettings
 from beauty_agent.core.security import Security
 from beauty_agent.db.models import ChannelAccount, OutboundMessage, Salon
 from beauty_agent.db.repositories.channels import ChannelAccountsRepository
-from beauty_agent.domain.enums import Channel, CrmKind, OutboxStatus
-
-
-@pytest.fixture
-async def fake_salon(session: AsyncSession, salon: Salon) -> Salon:
-    salon.settings = {"crm_kind": CrmKind.FAKE.value}
-    await session.commit()
-    await import_catalog(session, FakeCRM(), slug=salon.slug)
-    await session.refresh(salon)
-    return salon
-
-
-@pytest.fixture
-async def account(session: AsyncSession, fake_salon: Salon) -> ChannelAccount:
-    connected = await ChannelAccountsRepository(session).connect(
-        fake_salon.id, Channel.TELEGRAM, f"bot-{uuid.uuid4().hex[:6]}", {"token": TOKEN}, SECURITY
-    )
-    await session.commit()
-    return connected
+from beauty_agent.domain.enums import Channel, OutboxStatus
 
 
 def pipeline(

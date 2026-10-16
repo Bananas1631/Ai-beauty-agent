@@ -47,7 +47,11 @@ def parse_event(payload: dict[str, Any]) -> ChannelUpdate | None:
     if from_id <= 0 or peer_id >= _CHAT_PEER_START or message.get("out"):
         return None
     text = message.get("text")
-    kind = UpdateKind.TEXT if isinstance(text, str) and text.strip() else UpdateKind.UNSUPPORTED
+    photo = _photo_url(message.get("attachments"))
+    if photo is not None:
+        kind = UpdateKind.PHOTO
+    else:
+        kind = UpdateKind.TEXT if isinstance(text, str) and text.strip() else UpdateKind.UNSUPPORTED
     if kind is UpdateKind.TEXT and text and text.strip().lower() in {"начать", "start"}:
         kind = UpdateKind.START
     return ChannelUpdate(
@@ -57,8 +61,26 @@ def parse_event(payload: dict[str, Any]) -> ChannelUpdate | None:
         user_id=str(from_id),
         message_id=str(message.get("id") or message.get("conversation_message_id")),
         kind=kind,
-        text=clip(text) if kind is not UpdateKind.UNSUPPORTED else None,
+        text=clip(text) if kind is not UpdateKind.UNSUPPORTED and isinstance(text, str) and text.strip() else None,
+        photo=photo,
     )
+
+
+def _photo_url(attachments: object) -> str | None:
+    """Ссылка на самый крупный размер первого фото во вложениях; только https."""
+    if not isinstance(attachments, list):
+        return None
+    for attachment in attachments:
+        if not isinstance(attachment, dict) or attachment.get("type") != "photo":
+            continue
+        sizes = (attachment.get("photo") or {}).get("sizes") or []
+        candidates = [
+            size for size in sizes if isinstance(size, dict) and str(size.get("url", "")).startswith("https://")
+        ]
+        if candidates:
+            best = max(candidates, key=lambda size: int(size.get("width") or 0) * int(size.get("height") or 0))
+            return str(best["url"])
+    return None
 
 
 def random_id(dedupe_key: str) -> int:
