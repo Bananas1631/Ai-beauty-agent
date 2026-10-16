@@ -1,4 +1,5 @@
-# Контейнеры на сервере: api, воркеры Celery, postgres, redis, rabbitmq и Caddy (вход из интернета с HTTPS).
+# Контейнеры на сервере: api, воркеры Celery, postgres, redis, rabbitmq, Kafka с relay и потребителями
+# событий, мониторинг и Caddy (вход из интернета с HTTPS).
 # Лежит на сервере в /opt/beauty-agent рядом с .env и Caddyfile; обновляет его деплой из CI.
 #   docker compose -f docker-compose.prod.yml up -d
 # В отличие от локального compose: порты баз и брокера наружу не открыты, секреты — только из .env,
@@ -27,6 +28,7 @@ services:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       # api доступен только из внутренней сети Docker через Caddy, поэтому X-Forwarded-For
       # от Caddy можно доверять: по нему считаются лимиты частоты на IP
       FORWARDED_ALLOW_IPS: "*"
@@ -59,6 +61,7 @@ services:
       POSTGRES_HOST: postgres
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       # метрики дочерних процессов — в tmpfs, сводку отдаёт главный процесс на 9100 (только внутри сети)
       PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
       METRICS_PORT: "9100"
@@ -82,6 +85,98 @@ services:
               "--schedule", "/tmp/celerybeat-schedule"]
     healthcheck:
       disable: true
+
+  # Relay доменных событий: event_outbox → Kafka. Источник правды — PostgreSQL: бэкап Kafka не нужен,
+  # потерянное публикуется заново из outbox
+  relay:
+    <<: *app
+    expose: []
+    environment:
+      APP_ENV: prod
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      METRICS_PORT: "9101"
+      POSTGRES_POOL_SIZE: "2"
+      POSTGRES_MAX_OVERFLOW: "1"
+    command: ["python", "-m", "beauty_agent.events.outbox_relay"]
+    stop_grace_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  # Потребители событий: группа weekly-stats копит статистику для еженедельных отчётов.
+  # Отчёт переключается на неё (KAFKA_ENABLED=true в .env) после первой полной недели статистики
+  consumers:
+    <<: *app
+    expose: []
+    environment:
+      APP_ENV: prod
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      METRICS_PORT: "9102"
+      POSTGRES_POOL_SIZE: "2"
+      POSTGRES_MAX_OVERFLOW: "1"
+    command: ["python", "-m", "beauty_agent.events.consumers", "weekly-stats"]
+    stop_grace_period: 20s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  # Kafka: один узел KRaft (брокер и контроллер), только внутри сети Docker.
+  # Память ограничена: куча JVM 512 МБ, контейнер 1 ГБ (кэш страниц ОС — за пределами кучи)
+  kafka:
+    <<: *hardening
+    image: apache/kafka:3.9.1
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # UUID в base64, один раз на сервер: python -c "import base64,uuid;print(base64.urlsafe_b64encode(uuid.uuid4().bytes).rstrip(b'=').decode())"
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:?KAFKA_CLUSTER_ID не задан}
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_RETENTION_HOURS: "168"
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+    volumes:
+      - kafkadata:/var/lib/kafka/data
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   postgres:
     <<: *hardening
@@ -181,6 +276,7 @@ volumes:
   pgdata:
   redisdata:
   rabbitmqdata:
+  kafkadata:
   caddy_data:
   caddy_config:
   prometheusdata:

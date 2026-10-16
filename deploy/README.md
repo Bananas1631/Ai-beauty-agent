@@ -43,9 +43,15 @@ SENTRY_DSN=...
 SENTRY_ENVIRONMENT=prod
 BACKUP_GPG_RECIPIENT=backup@example.ru
 BACKUP_REMOTE=s3-ru:beauty-backups
+KAFKA_CLUSTER_ID=<python -c "import base64,uuid;print(base64.urlsafe_b64encode(uuid.uuid4().bytes).rstrip(b'=').decode())">
+KAFKA_ENABLED=false
 ```
 
 Строка `APP_IMAGE=` должна быть: деплой обновляет её на версию, которая сейчас работает.
+
+`KAFKA_CLUSTER_ID` задаётся один раз и больше не меняется: им размечен том `kafkadata`.
+`KAFKA_ENABLED=true` — после первой полной недели работы `consumers`: тогда еженедельный отчёт
+берёт цифры из статистики событий (docs/events.md), а не из SQL по всей базе.
 
 Если пакет в GHCR приватный, на сервере один раз: `docker login ghcr.io` с токеном
 (classic PAT только с правом `read:packages`).

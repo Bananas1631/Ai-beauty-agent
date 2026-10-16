@@ -2,8 +2,9 @@
 
 - Читает пачками (getmany), offset коммитит вручную и только после обработки всех событий
   партиции из пачки: упавший посреди пачки процесс перечитает её после перезапуска.
-- Повторная доставка не даёт двойного эффекта: event_id пишется в processed_events (группа +
-  event_id уникальны) в той же транзакции, что и результат обработчика. Дубль — пропуск.
+- Повторная доставка не даёт двойного эффекта: event_id пишется в processed_events (обработчик +
+  event_id уникальны) в той же транзакции, что и результат обработчика. Дубль — пропуск, в том
+  числе при перечитывании журнала другой группой Kafka (scripts/replay_events.py).
 - Ошибка обработчика — до 3 попыток с паузой; затем событие уходит в <топик>.dlq с причиной в
   заголовках, администратор получает уведомление, а потребитель идёт дальше: одно «ядовитое»
   событие не останавливает партицию. Событие не по схеме — сразу в DLQ, повтор не поможет.
@@ -16,10 +17,12 @@ import asyncio
 import contextlib
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 import structlog
 from aiokafka import AIOKafkaConsumer, ConsumerRecord, TopicPartition
+from aiokafka.admin import AIOKafkaAdminClient
 from pydantic import ValidationError
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -89,7 +92,15 @@ class EventConsumer:
         max_attempts: int = MAX_ATTEMPTS,
         retry_delay_s: float = 0.5,
         batch_max: int = 100,
+        subscribe: bool = True,
+        kafka_group: str | None = None,
     ) -> None:
+        """subscribe=False — партиции назначаются вручную (assign_all): перечитывание одним процессом.
+
+        kafka_group — своя группа Kafka (своя позиция чтения) для перечитывания. Идемпотентность при
+        этом остаётся за обработчиком (handler.group в processed_events): перечитывание применит только
+        то, что ещё не применено, и не удвоит статистику.
+        """
         self.settings = settings
         self.session_factory = session_factory
         self.handler = handler
@@ -99,10 +110,10 @@ class EventConsumer:
         self.retry_delay_s = retry_delay_s
         self.batch_max = batch_max
         self.consumer = AIOKafkaConsumer(
-            *handler.topics,
+            *(handler.topics if subscribe else ()),
             bootstrap_servers=settings.bootstrap_servers,
-            client_id=f"{settings.client_id}-{handler.group}",
-            group_id=handler.group,
+            client_id=f"{settings.client_id}-{kafka_group or handler.group}",
+            group_id=kafka_group or handler.group,
             enable_auto_commit=False,
             auto_offset_reset="earliest",  # новая группа читает всё, что хранится в топике
             max_poll_records=batch_max,
@@ -114,6 +125,57 @@ class EventConsumer:
 
     async def stop(self) -> None:
         await self.consumer.stop()
+
+    async def assign_all(self) -> list[TopicPartition]:
+        """Все партиции топиков обработчика — этому процессу, без ребалансировки группы."""
+        # partitions_for_topic потребителя знает только топики подписки — спрашиваем кластер напрямую
+        admin = AIOKafkaAdminClient(
+            bootstrap_servers=self.settings.bootstrap_servers, request_timeout_ms=self.settings.request_timeout_ms
+        )
+        await admin.start()
+        try:
+            described = await admin.describe_topics(list(self.handler.topics))
+        finally:
+            await admin.close()
+        partitions = [
+            TopicPartition(topic["topic"], partition["partition"])
+            for topic in described
+            for partition in sorted(topic["partitions"], key=lambda item: item["partition"])
+        ]
+        self.consumer.assign(partitions)
+        return partitions
+
+    async def seek(
+        self,
+        partitions: Sequence[TopicPartition],
+        *,
+        since: datetime | None = None,
+        offsets: dict[TopicPartition, int] | None = None,
+    ) -> None:
+        """С начала хранения (по умолчанию), с момента времени или с заданных offset."""
+        if offsets is not None:
+            for partition, offset in offsets.items():
+                self.consumer.seek(partition, offset)
+            return
+        if since is None:
+            await self.consumer.seek_to_beginning(*partitions)
+            return
+        moment_ms = int(since.timestamp() * 1000)
+        found = await self.consumer.offsets_for_times({partition: moment_ms for partition in partitions})
+        for partition in partitions:
+            position = found.get(partition)
+            if position is None:  # после этого момента событий нет — читать с конца
+                await self.consumer.seek_to_end(partition)
+            else:
+                self.consumer.seek(partition, position.offset)
+
+    async def caught_up(self) -> bool:
+        """Группа дочитала всё, что было в партициях на момент проверки."""
+        for partition in self.consumer.assignment():
+            end = (await self.consumer.end_offsets([partition]))[partition]
+            if await self.consumer.position(partition) < end:
+                return False
+        return True
 
     async def poll_once(self, timeout_ms: int = 1000) -> PollResult:
         result = PollResult()

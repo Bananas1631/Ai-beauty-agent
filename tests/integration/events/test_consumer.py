@@ -2,11 +2,10 @@
 
 import time
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 
-import pytest
 from aiokafka import AIOKafkaConsumer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +26,7 @@ from beauty_agent.domain.events import (
 )
 from beauty_agent.events.consumer import EventConsumer, PollResult, headers_dict
 from beauty_agent.events.handlers.reports import WeeklyStatsHandler
-from beauty_agent.events.producer import DLQ_SUFFIX, EventProducer, OutgoingEvent, ensure_topics
+from beauty_agent.events.producer import DLQ_SUFFIX, EventProducer, OutgoingEvent
 from beauty_agent.workers.reports import weekly_report
 
 MONDAY_EVENING = datetime(2026, 12, 14, 19, 30, tzinfo=UTC)  # 22:30 МСК — вне рабочего времени
@@ -46,21 +45,6 @@ class CountingHandler:
         if event.event_id in self.poisoned:
             raise ValueError("обработчик не справился")
         self.seen.append(event.event_id)
-
-
-@pytest.fixture
-async def topic(kafka: KafkaSettings) -> str:
-    name = f"test.events.{uuid.uuid4().hex[:8]}"
-    await ensure_topics(kafka, [name, f"{name}{DLQ_SUFFIX}"])
-    return name
-
-
-@pytest.fixture
-async def producer(kafka: KafkaSettings) -> AsyncIterator[EventProducer]:
-    started = EventProducer(kafka)
-    await started.start()
-    yield started
-    await started.stop()
 
 
 async def publish(producer: EventProducer, topic: str, *events: DomainEvent) -> None:

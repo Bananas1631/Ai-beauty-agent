@@ -24,6 +24,7 @@ from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 from beauty_agent.core.config import KafkaSettings, PostgresSettings
 from beauty_agent.core.db import make_engine, make_session_factory
 from beauty_agent.db.models import EventOutbox, ProcessedEvent, Salon, SalonWeekStats
+from beauty_agent.events.producer import DLQ_SUFFIX, EventProducer, ensure_topics
 
 KAFKA_IMAGE = "apache/kafka:3.9.1"  # тот же образ, что в docker-compose
 
@@ -117,3 +118,18 @@ async def consume(
     finally:
         await consumer.stop()
     return [payload for _, _, payload in sorted(found, key=lambda item: (item[0], item[1]))]
+
+
+@pytest.fixture
+async def topic(kafka: KafkaSettings) -> str:
+    name = f"test.events.{uuid.uuid4().hex[:8]}"
+    await ensure_topics(kafka, [name, f"{name}{DLQ_SUFFIX}"])
+    return name
+
+
+@pytest.fixture
+async def producer(kafka: KafkaSettings) -> AsyncIterator[EventProducer]:
+    started = EventProducer(kafka)
+    await started.start()
+    yield started
+    await started.stop()
