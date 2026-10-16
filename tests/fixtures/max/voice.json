@@ -1,0 +1,10 @@
+{
+  "update_type": "message_created",
+  "timestamp": 1763380000999,
+  "message": {
+    "sender": {"user_id": 40021, "first_name": "Анна", "is_bot": false},
+    "recipient": {"chat_id": 9000123, "chat_type": "dialog"},
+    "timestamp": 1763380000990,
+    "body": {"mid": "mid.0000000000ab12ce", "seq": 116, "text": "", "attachments": [{"type": "audio", "payload": {"url": "https://example.invalid/a.ogg"}}]}
+  }
+}

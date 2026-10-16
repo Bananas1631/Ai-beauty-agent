@@ -2,12 +2,13 @@
 
 Приём — быстро, меньше 100 мс: отсев повтора по ID обновления (SET NX в Redis), сообщение в пачку
 склейки и отложенная задача в очередь. Обработка — в воркере Celery: пачка склейки → сервис диалога →
-доставка ответа через outbox. Голосовые, стикеры и файлы получают вежливый ответ, администратор — уведомление.
+доставка ответа через outbox (в теневом режиме — черновик в админ-бот). Голосовые, стикеры и файлы
+получают вежливый ответ, администратор — уведомление.
 """
 
 import uuid
-from dataclasses import dataclass
-from typing import Protocol
+from dataclasses import dataclass, field
+from typing import Any, Protocol
 
 import structlog
 from redis.asyncio import Redis
@@ -18,6 +19,7 @@ from beauty_agent.conversation.debounce import Debouncer
 from beauty_agent.conversation.notifications import AdminEvent, AdminEventKind, Notifier
 from beauty_agent.conversation.outbox import Outbox, enqueue_outbound, outbox_key
 from beauty_agent.conversation.service import ConversationService, IncomingMessage, ReplyRoute
+from beauty_agent.conversation.shadow_mode import ShadowMode
 from beauty_agent.core.redis import key
 from beauty_agent.db.repositories.channels import ChannelAccountsRepository
 
@@ -32,6 +34,10 @@ UNSUPPORTED_ANSWER = (
 
 class MessageQueue(Protocol):
     async def schedule(self, account_id: uuid.UUID, chat_id: str, token: str, *, delay_s: float) -> None: ...
+
+    async def submit_admin_update(self, payload: dict[str, Any]) -> None:
+        """Обновление админ-бота (нажатие кнопки, ответ администратора) — в воркер."""
+        ...
 
 
 @dataclass
@@ -63,6 +69,16 @@ class InboundProcessor:
     conversations: ConversationService
     outbox: Outbox
     notifier: Notifier
+    shadow: ShadowMode | None = field(default=None)
+
+    async def dead_letter(self, account_id: uuid.UUID) -> None:
+        """Сообщение не обработано после всех повторов: уведомить администраторов салона."""
+        async with self.session_factory() as session:
+            found = await ChannelAccountsRepository(session).get_with_salon(account_id)
+        salon_id = str(found[1].id) if found else "-"
+        await self.notifier.notify(
+            AdminEvent(AdminEventKind.DEAD_LETTER, salon_id, None, "Сообщение клиента не обработано после повторов")
+        )
 
     async def process(self, account_id: uuid.UUID, chat_id: str, token: str) -> None:
         updates = await self.debouncer.take(account_id, chat_id, token)
@@ -99,6 +115,8 @@ class InboundProcessor:
                 )
             )
             delivery_key = reply.outbox_key
+            if reply.draft_id is not None and self.shadow is not None:
+                await self.shadow.publish(reply.draft_id)
         else:
             delivery_key = outbox_key(last.channel, account.id, chat_id, last.message_id)
             async with self.session_factory() as session:

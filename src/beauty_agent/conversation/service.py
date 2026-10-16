@@ -6,6 +6,11 @@
 
 Для мессенджеров ответ не отправляется отсюда, а записывается в outbox в той же транзакции,
 что и сообщение агента: отправку делает воркер, и повтор задачи не даст второго ответа.
+В теневом режиме вместо outbox — черновик для администратора (conversation/shadow_mode.py).
+
+Согласие (152-ФЗ, domain/consent.py): без него телефон и e-mail вырезаются из сообщения до
+сохранения и до LLM, запись недоступна, к первому ответу добавляется текст со ссылкой на политику.
+Пока диалог у администратора, агент молчит: сообщения клиента пересылаются в админ-бот.
 """
 
 import uuid
@@ -27,18 +32,30 @@ from beauty_agent.agent.loop import HANDOFF_ANSWER, Agent, AgentResult
 from beauty_agent.agent.registry import ToolContext
 from beauty_agent.agent.router import build_router
 from beauty_agent.agent.state import StateStore
-from beauty_agent.agent.tools import default_registry
+from beauty_agent.agent.tools import CONSENT_REQUIRED, default_registry
 from beauty_agent.catalog.lookup import DbCatalog
+from beauty_agent.conversation.handoff import hand_off
 from beauty_agent.conversation.notifications import AdminEvent, AdminEventKind, Notifier
 from beauty_agent.conversation.outbox import enqueue_outbound, outbox_key
+from beauty_agent.conversation.privacy import PrivacyService
 from beauty_agent.core.redis import RedisLock, key
 from beauty_agent.core.tracing import NoopTracer, Tracer
 from beauty_agent.db.models import Salon
+from beauty_agent.db.repositories.admins import DraftsRepository
 from beauty_agent.db.repositories.bookings import SqlBookingLedger
 from beauty_agent.db.repositories.clients import ClientsRepository
 from beauty_agent.db.repositories.conversations import ConversationsRepository
 from beauty_agent.domain.booking_engine.service import BookingService
-from beauty_agent.domain.enums import Channel, ConversationStatus, MessageRole
+from beauty_agent.domain.consent import (
+    WITHDRAWN_ANSWER,
+    ConsentIntent,
+    ConsentState,
+    allows_personal_data,
+    consent_request,
+    detect_intent,
+    strip_personal_data,
+)
+from beauty_agent.domain.enums import Channel, ConversationStatus, MessageRole, ReplyMode
 from beauty_agent.rag.embeddings import EmbeddingsClient, HashingEmbeddings
 from beauty_agent.rag.retriever import HybridRetriever, RagSalonInfo
 
@@ -56,6 +73,9 @@ class ReplyRoute:
     account_id: uuid.UUID
     chat_id: str
     route: dict[str, Any] = field(default_factory=dict)
+
+    def to_json(self) -> dict[str, Any]:
+        return {"account_id": str(self.account_id), "chat_id": self.chat_id, "route": dict(self.route)}
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +97,7 @@ class Reply:
     duplicate: bool = False
     result: AgentResult | None = None
     outbox_key: str | None = None  # что доставить воркеру; при повторе задачи — тот же ключ
+    draft_id: uuid.UUID | None = None  # теневой режим: черновик для администратора вместо ответа
 
 
 class ConversationService:
@@ -93,6 +114,7 @@ class ConversationService:
         embedder: EmbeddingsClient | None = None,
         tracer: Tracer | None = None,
         clock: Callable[[], datetime] | None = None,
+        privacy: PrivacyService | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.redis = redis
@@ -105,6 +127,7 @@ class ConversationService:
         self.tracer = tracer or NoopTracer()
         self.clock = clock or (lambda: datetime.now(UTC))
         self.states = StateStore(redis)
+        self.privacy = privacy or PrivacyService(redis, public_url="http://localhost:8000")
         self.budget = DailyBudget(redis)
         self.lock = RedisLock(redis)
 
@@ -138,15 +161,35 @@ class ConversationService:
         message: IncomingMessage,
         text: str,
         *,
+        question: str = "",
         tokens_in: int | None = None,
         tokens_out: int | None = None,
         cost_rub: Decimal | None = None,
-    ) -> str | None:
-        """Сохраняет ответ агента и, для мессенджера, строку outbox — одной транзакцией."""
+    ) -> tuple[str | None, uuid.UUID | None]:
+        """Ответ агента одной транзакцией: сообщение и строка outbox, а в теневом режиме — черновик.
+
+        Возвращает (ключ outbox, ID черновика).
+        """
+        delivery_key = self._outbox_key(message)
+        if delivery_key and message.reply_to and message.salon.config.reply_mode is ReplyMode.SHADOW:
+            drafts = DraftsRepository(session)
+            draft_id = await drafts.create(
+                message.salon.id,
+                conversation_id,
+                dedupe_key=delivery_key,
+                question=question,
+                text=text,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                cost_rub=cost_rub,
+            )
+            if draft_id is None:
+                existing = await drafts.by_key(message.salon.id, delivery_key)
+                draft_id = existing.id if existing else None
+            return None, draft_id
         await conversations.add_message(
             conversation_id, MessageRole.AGENT, text, tokens_in=tokens_in, tokens_out=tokens_out, cost_rub=cost_rub
         )
-        delivery_key = self._outbox_key(message)
         if delivery_key and message.reply_to:
             await enqueue_outbound(
                 session,
@@ -159,13 +202,42 @@ class ConversationService:
                 text=text,
                 dedupe_key=delivery_key,
             )
-        return delivery_key
+        return delivery_key, None
+
+    async def _withdraw(self, session: AsyncSession, message: IncomingMessage, client_id: uuid.UUID) -> Reply:
+        """Отзыв согласия: данные удаляются, подтверждение уходит клиенту сразу, без черновика."""
+        await self.privacy.withdraw(session, message.salon.id, client_id, message.channel)
+        delivery_key = self._outbox_key(message)
+        if delivery_key and message.reply_to:
+            await enqueue_outbound(
+                session,
+                salon_id=message.salon.id,
+                account_id=message.reply_to.account_id,
+                conversation_id=None,  # диалог удалён вместе с перепиской
+                channel=message.channel,
+                chat_id=message.reply_to.chat_id,
+                route=message.reply_to.route,
+                text=WITHDRAWN_ANSWER,
+                dedupe_key=delivery_key,
+            )
+        return Reply(WITHDRAWN_ANSWER, None, outbox_key=delivery_key)
 
     async def _handle(self, session: AsyncSession, message: IncomingMessage) -> Reply:
         salon = message.salon
         clients = ClientsRepository(session, salon.id)
         conversations = ConversationsRepository(session, salon.id)
         client = await clients.find_or_create(message.channel, message.external_user_id, name=message.client_name)
+        intent = detect_intent(message.text)
+        if intent is ConsentIntent.WITHDRAW:
+            return await self._withdraw(session, message, client.id)
+        consent = await self.privacy.state(session, salon.id, client.id)
+        if intent is ConsentIntent.GRANT and consent is not ConsentState.GRANTED:
+            await self.privacy.grant(session, salon.id, client.id, message.channel)
+            consent = ConsentState.GRANTED
+        allowed = allows_personal_data(consent)
+        # Без согласия телефон и e-mail не сохраняются и не уходят в LLM
+        text = message.text if allowed else strip_personal_data(message.text)
+
         conversation = await conversations.open_for(client.id, message.channel)
         conversation_id = conversation.id
         # Состояние — до сохранения нового сообщения: иначе восстановление из БД добавило бы
@@ -174,20 +246,33 @@ class ConversationService:
             str(salon.id), str(conversation_id), restore=lambda: conversations.restore_state(conversation_id)
         )
         stored = await conversations.add_message(
-            conversation_id, MessageRole.CLIENT, message.text, external_id=message.external_message_id
+            conversation_id, MessageRole.CLIENT, text, external_id=message.external_message_id
         )
         if stored is None:
             # Повтор вебхука или задачи: ответ уже сохранён — воркер доставит его, если не успел
-            return Reply(None, conversation_id, duplicate=True, outbox_key=self._outbox_key(message))
+            delivery_key = self._outbox_key(message)
+            draft = await DraftsRepository(session).by_key(salon.id, delivery_key) if delivery_key else None
+            return Reply(
+                None,
+                conversation_id,
+                duplicate=True,
+                outbox_key=None if draft else delivery_key,
+                draft_id=draft.id if draft else None,
+            )
+        if message.reply_to is not None:
+            await conversations.set_route(conversation_id, message.reply_to.to_json())
         if conversation.status is ConversationStatus.HANDED_OFF:
             await self.notifier.notify(
-                AdminEvent(AdminEventKind.CLIENT_MESSAGE, str(salon.id), str(conversation_id), message.text)
+                AdminEvent(AdminEventKind.CLIENT_MESSAGE, str(salon.id), str(conversation_id), text)
             )
-            return Reply(HANDED_OFF_ANSWER, conversation_id, handed_off=True)
+            # Мессенджер: агент молчит, отвечает администратор из админ-бота. Виджету сайта
+            # администратор ответить не может — клиент там хотя бы узнает, что его услышали
+            answer = HANDED_OFF_ANSWER if message.reply_to is None else None
+            return Reply(answer, conversation_id, handed_off=True)
 
         config = salon.config
         if await self.budget.exceeded(str(salon.id), config.daily_llm_budget_rub):
-            return await self._budget_exceeded(session, conversations, conversation_id, message)
+            return await self._budget_exceeded(session, conversations, conversation_id, message, text)
 
         try:
             router = build_router(
@@ -195,12 +280,11 @@ class ConversationService:
             )
         except ValueError:  # ни одной настроенной модели — отвечает администратор
             logger.error("no_llm_configured", salon_id=str(salon.id))
-            delivery_key = await self._answer(session, conversations, conversation_id, message, HANDOFF_ANSWER)
-            await conversations.set_status(conversation_id, ConversationStatus.HANDED_OFF)
-            await self.notifier.notify(
-                AdminEvent(AdminEventKind.HANDOFF, str(salon.id), str(conversation_id), "Не настроена ни одна LLM")
+            delivery_key, draft_id = await self._answer(
+                session, conversations, conversation_id, message, HANDOFF_ANSWER, question=text
             )
-            return Reply(HANDOFF_ANSWER, conversation_id, handed_off=True, outbox_key=delivery_key)
+            await hand_off(session, self.notifier, salon.id, conversation_id, "Не настроена ни одна LLM")
+            return Reply(HANDOFF_ANSWER, conversation_id, handed_off=True, outbox_key=delivery_key, draft_id=draft_id)
 
         booking = BookingService(
             salon_id=str(salon.id),
@@ -219,15 +303,34 @@ class ConversationService:
             salon_info=RagSalonInfo(HybridRetriever(session, salon.id, self.embedder)),
             client_id=client.id,
         )
-        agent = Agent(router, default_registry(), prompt_version=config.prompt_version, tracer=self.tracer)
-        result = await agent.run(message.text, ctx, state, profile=await clients.profile(client))
+        agent = Agent(
+            router,
+            default_registry(personal_data_allowed=allowed),
+            prompt_version=config.prompt_version,
+            tracer=self.tracer,
+        )
+        result = await agent.run(text, ctx, state, profile=await clients.profile(client))
+        answer = result.text
+        # Просьба о согласии — к первому ответу и когда агент пытался записать; не при передаче администратору
+        if (
+            not allowed
+            and not result.handed_off
+            and (
+                await conversations.count_messages(conversation_id, MessageRole.AGENT) == 0
+                or any(
+                    outcome.result and outcome.result.get("status") == CONSENT_REQUIRED for outcome in result.tool_calls
+                )
+            )
+        ):
+            answer = f"{answer}\n\n{consent_request(self.privacy.policy_url(salon))}"
 
-        delivery_key = await self._answer(
+        delivery_key, draft_id = await self._answer(
             session,
             conversations,
             conversation_id,
             message,
-            result.text,
+            answer,
+            question=text,
             tokens_in=result.usage.prompt_tokens,
             tokens_out=result.usage.completion_tokens,
             cost_rub=result.cost_rub,
@@ -237,10 +340,7 @@ class ConversationService:
         await self.budget.add(str(salon.id), result.cost_rub)
         await self.states.save(str(salon.id), str(conversation_id), state)
         if result.handed_off:
-            await conversations.set_status(conversation_id, ConversationStatus.HANDED_OFF)
-            await self.notifier.notify(
-                AdminEvent(AdminEventKind.HANDOFF, str(salon.id), str(conversation_id), result.handoff_reason or "")
-            )
+            await hand_off(session, self.notifier, salon.id, conversation_id, result.handoff_reason or "")
         if any(outcome.result and outcome.result.get("status") == "pending_admin" for outcome in result.tool_calls):
             await self.notifier.notify(
                 AdminEvent(
@@ -250,7 +350,14 @@ class ConversationService:
                     "CRM недоступна: подтвердите запись вручную",
                 )
             )
-        return Reply(result.text, conversation_id, handed_off=result.handed_off, result=result, outbox_key=delivery_key)
+        return Reply(
+            answer,
+            conversation_id,
+            handed_off=result.handed_off,
+            result=result,
+            outbox_key=delivery_key,
+            draft_id=draft_id,
+        )
 
     async def _budget_exceeded(
         self,
@@ -258,10 +365,13 @@ class ConversationService:
         conversations: ConversationsRepository,
         conversation_id: uuid.UUID,
         message: IncomingMessage,
+        question: str,
     ) -> Reply:
         salon = message.salon
         logger.warning("llm_budget_exceeded", salon_id=str(salon.id))
-        delivery_key = await self._answer(session, conversations, conversation_id, message, BUDGET_EXCEEDED_ANSWER)
+        delivery_key, draft_id = await self._answer(
+            session, conversations, conversation_id, message, BUDGET_EXCEEDED_ANSWER, question=question
+        )
         await conversations.set_status(conversation_id, ConversationStatus.HANDED_OFF)
         if await self.budget.first_alert_today(str(salon.id)):
             await self.notifier.notify(
@@ -272,4 +382,6 @@ class ConversationService:
                     f"Дневной лимит расходов на LLM ({salon.config.daily_llm_budget_rub} ₽) исчерпан",
                 )
             )
-        return Reply(BUDGET_EXCEEDED_ANSWER, conversation_id, handed_off=True, outbox_key=delivery_key)
+        return Reply(
+            BUDGET_EXCEEDED_ANSWER, conversation_id, handed_off=True, outbox_key=delivery_key, draft_id=draft_id
+        )

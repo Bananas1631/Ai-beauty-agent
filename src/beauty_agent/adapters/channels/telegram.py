@@ -107,14 +107,16 @@ class TelegramBotApi:
 
     # ------------------------------------------------------------- вебхук и polling
 
-    async def set_webhook(self, token: str, url: str, secret_token: str) -> None:
+    async def set_webhook(
+        self, token: str, url: str, secret_token: str, *, allowed_updates: list[str] | None = None
+    ) -> None:
         await self.call(
             token,
             "setWebhook",
             {
                 "url": url,
                 "secret_token": secret_token,
-                "allowed_updates": _ALLOWED_UPDATES,
+                "allowed_updates": allowed_updates or _ALLOWED_UPDATES,
                 "drop_pending_updates": False,
             },
         )
@@ -122,9 +124,16 @@ class TelegramBotApi:
     async def delete_webhook(self, token: str) -> None:
         await self.call(token, "deleteWebhook", {"drop_pending_updates": False})
 
-    async def get_updates(self, token: str, offset: int | None, *, timeout_s: int = 25) -> list[dict[str, Any]]:
+    async def get_updates(
+        self,
+        token: str,
+        offset: int | None,
+        *,
+        timeout_s: int = 25,
+        allowed_updates: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """Long polling для локальной разработки: на ноутбуке нет публичного HTTPS для вебхука."""
-        payload: dict[str, Any] = {"timeout": timeout_s, "allowed_updates": _ALLOWED_UPDATES}
+        payload: dict[str, Any] = {"timeout": timeout_s, "allowed_updates": allowed_updates or _ALLOWED_UPDATES}
         if offset is not None:
             payload["offset"] = offset
         result = await self.call(token, "getUpdates", payload, timeout_s=timeout_s + 10)

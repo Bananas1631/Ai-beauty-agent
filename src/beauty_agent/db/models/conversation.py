@@ -1,10 +1,11 @@
 """Диалоги, сообщения и журнал вызовов инструментов агента."""
 
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import ForeignKey, Index, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -16,6 +17,10 @@ class Conversation(UUIDPrimaryKey, SalonOwned, Timestamps, Base):
     """Диалог клиента с салоном в одном канале."""
 
     __tablename__ = "conversations"
+    __table_args__ = (
+        # инбокс: диалоги салона по последнему сообщению, keyset-пагинация (время, id)
+        Index(None, "salon_id", "last_message_at", "id"),
+    )
 
     client_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("clients.id", ondelete="CASCADE"),  # переписка — персональные данные клиента
@@ -27,6 +32,10 @@ class Conversation(UUIDPrimaryKey, SalonOwned, Timestamps, Base):
         server_default=ConversationStatus.ACTIVE.value,
     )
     summary: Mapped[str | None] = mapped_column(Text)  # резюме старых реплик (21 октября)
+    last_message_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    # куда отвечать в мессенджере: аккаунт канала, чат и параметры (business_connection_id);
+    # нужен для ответа администратора, черновиков теневого режима и напоминаний
+    reply_route: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
 class Message(UUIDPrimaryKey, SalonOwned, Timestamps, Base):

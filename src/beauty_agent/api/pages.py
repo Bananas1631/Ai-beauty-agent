@@ -1,4 +1,5 @@
-"""HTML-страницы сервиса: страница салона /s/{slug} с услугами, ценами и чатом на всю страницу.
+"""HTML-страницы сервиса: страница салона /s/{slug} с услугами, ценами и чатом на всю страницу
+и политика обработки персональных данных /privacy/{slug}, на которую ведёт ссылка из текста согласия.
 
 Шаблоны Jinja2 с автоэкранированием: название услуги «<script>» из CRM выведется как текст.
 Демо-страница помечена «Демо» и закрыта от поисковиков: это страница реального салона,
@@ -14,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from beauty_agent.api.deps import SalonDep, SessionDep
 from beauty_agent.catalog.lookup import DbCatalog
+from beauty_agent.domain.consent import CONSENT_VERSION
 from beauty_agent.domain.entities import ServiceInfo
 
 router = APIRouter(tags=["pages"], include_in_schema=False)
@@ -34,4 +36,21 @@ async def salon_page(request: Request, salon: SalonDep, session: SessionDep) -> 
     if salon.is_demo:
         response.headers["X-Robots-Tag"] = "noindex, nofollow"
     response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@router.get("/privacy/{slug}", response_class=HTMLResponse)
+async def privacy_page(request: Request, salon: SalonDep) -> HTMLResponse:
+    config = salon.config
+    response = templates.TemplateResponse(
+        request,
+        "privacy.html",
+        {
+            "salon": salon,
+            "privacy": config.privacy,
+            "retention_days": config.retention_days,
+            "version": CONSENT_VERSION,
+        },
+    )
+    response.headers["X-Robots-Tag"] = "noindex"
     return response

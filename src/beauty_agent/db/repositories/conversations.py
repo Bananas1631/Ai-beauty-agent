@@ -6,16 +6,27 @@
 
 import uuid
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, tuple_, update
 from sqlalchemy.dialects.postgresql import insert
 
 from beauty_agent.agent.registry import ToolOutcome
 from beauty_agent.agent.state import MAX_FACTS, MAX_STORED_TURNS, DialogState, Turn
-from beauty_agent.db.models import Conversation, Message, ToolCall
+from beauty_agent.db.models import Client, Conversation, Message, ToolCall
 from beauty_agent.db.repositories.base import SalonRepository
 from beauty_agent.domain.enums import Channel, ConversationStatus, MessageRole
+
+
+@dataclass(frozen=True, slots=True)
+class Cursor:
+    """Позиция в выдаче: время и id последней строки предыдущей страницы."""
+
+    at: datetime
+    id: uuid.UUID
 
 
 class ConversationsRepository(SalonRepository[Conversation]):
@@ -47,7 +58,11 @@ class ConversationsRepository(SalonRepository[Conversation]):
         tokens_out: int | None = None,
         cost_rub: Decimal | None = None,
     ) -> uuid.UUID | None:
-        """Сохраняет сообщение. Повтор вебхука с тем же external_id — None, дубль не создаётся."""
+        """Сохраняет сообщение. Повтор вебхука с тем же external_id — None, дубль не создаётся.
+
+        Время — clock_timestamp(), а не now(): реплика клиента и ответ агента пишутся в одной
+        транзакции, и с одинаковым временем их порядок в истории был бы случайным.
+        """
         statement = (
             insert(Message)
             .values(
@@ -59,11 +74,68 @@ class ConversationsRepository(SalonRepository[Conversation]):
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
                 cost_rub=cost_rub,
+                created_at=func.clock_timestamp(),
+                updated_at=func.clock_timestamp(),
             )
             .on_conflict_do_nothing(index_elements=["conversation_id", "external_id"])
             .returning(Message.id)
         )
-        return await self.session.scalar(statement)
+        message_id = await self.session.scalar(statement)
+        if message_id is not None:
+            await self.session.execute(
+                update(Conversation)
+                .where(Conversation.salon_id == self.salon_id, Conversation.id == conversation_id)
+                .values(last_message_at=func.clock_timestamp())
+            )
+        return message_id
+
+    async def count_messages(self, conversation_id: uuid.UUID, role: MessageRole) -> int:
+        statement = select(func.count()).where(
+            Message.salon_id == self.salon_id, Message.conversation_id == conversation_id, Message.role == role
+        )
+        return int((await self.session.execute(statement)).scalar_one())
+
+    async def set_route(self, conversation_id: uuid.UUID, route: dict[str, Any]) -> None:
+        await self.session.execute(
+            update(Conversation)
+            .where(Conversation.salon_id == self.salon_id, Conversation.id == conversation_id)
+            .values(reply_route=route)
+        )
+
+    # ------------------------------------------------------------- инбокс: keyset-пагинация
+
+    async def page(self, *, limit: int, after: "Cursor | None" = None) -> list[tuple[Conversation, str | None]]:
+        """Диалоги салона, новые сверху; следующая страница — строго «раньше» последней строки.
+
+        Условие (время, id) < (время_курсора, id_курсора) идёт по индексу и не замедляется
+        на длинной истории, в отличие от OFFSET, который перебирает пропущенные строки.
+        """
+        statement = (
+            select(Conversation, Client.name)
+            .join(Client, Client.id == Conversation.client_id)
+            .where(Conversation.salon_id == self.salon_id)
+            .order_by(Conversation.last_message_at.desc(), Conversation.id.desc())
+            .limit(limit)
+        )
+        if after is not None:
+            statement = statement.where(
+                tuple_(Conversation.last_message_at, Conversation.id) < tuple_(after.at, after.id)
+            )
+        return [(row[0], row[1]) for row in await self.session.execute(statement)]
+
+    async def messages_page(
+        self, conversation_id: uuid.UUID, *, limit: int, before: "Cursor | None" = None
+    ) -> list[Message]:
+        """Сообщения диалога, новые сверху; курсор — последнее сообщение предыдущей страницы."""
+        statement = (
+            select(Message)
+            .where(Message.salon_id == self.salon_id, Message.conversation_id == conversation_id)
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(limit)
+        )
+        if before is not None:
+            statement = statement.where(tuple_(Message.created_at, Message.id) < tuple_(before.at, before.id))
+        return list((await self.session.scalars(statement)).all())
 
     async def last_messages(self, conversation_id: uuid.UUID, limit: int = MAX_STORED_TURNS) -> list[Message]:
         statement = (

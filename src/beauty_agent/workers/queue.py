@@ -3,6 +3,7 @@
 
 import asyncio
 import uuid
+from typing import Any
 
 
 class CeleryQueue:
@@ -12,3 +13,8 @@ class CeleryQueue:
         await asyncio.to_thread(
             process_batch_task.apply_async, args=[str(account_id), chat_id, token], countdown=delay_s
         )
+
+    async def submit_admin_update(self, payload: dict[str, Any]) -> None:
+        from beauty_agent.workers.messages import admin_update_task
+
+        await asyncio.to_thread(admin_update_task.apply_async, args=[payload])

@@ -68,7 +68,8 @@ async def test_message_is_answered_and_logged(
 
     result = await service.handle(message(fake_salon, "Сколько стоит педикюр?"))
 
-    assert result.text == "Педикюр с покрытием — 3 200 ₽."
+    assert result.text is not None
+    assert result.text.startswith("Педикюр с покрытием — 3 200 ₽.\n\n")  # + просьба о согласии
     assert result.conversation_id is not None
     messages = (await session.scalars(select(Message).where(Message.conversation_id == result.conversation_id))).all()
     assert [m.role for m in messages] == [MessageRole.CLIENT, MessageRole.AGENT]
@@ -88,7 +89,8 @@ async def test_repeated_webhook_is_not_answered_twice(
     first = await service.handle(message(fake_salon, "Привет", message_id="tg-1"))
     second = await service.handle(message(fake_salon, "Привет", message_id="tg-1"))
 
-    assert first.text == "Здравствуйте!"
+    assert first.text is not None
+    assert first.text.startswith("Здравствуйте!")
     assert second.duplicate
     assert second.text is None
     assert len(llm.calls) == 1

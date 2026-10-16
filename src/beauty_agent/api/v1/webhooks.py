@@ -14,12 +14,16 @@ import structlog
 from fastapi import APIRouter, Header, HTTPException, Request, Response, status
 from fastapi.responses import PlainTextResponse
 
+from beauty_agent.adapters.channels import max as max_channel
 from beauty_agent.adapters.channels import telegram, vk
+from beauty_agent.adapters.channels.admin_bot import ADMIN_BOT_ACCOUNT
 from beauty_agent.api.deps import SessionDep
-from beauty_agent.conversation.inbound import InboundGate
+from beauty_agent.conversation.inbound import DEDUPE_TTL_S, InboundGate
+from beauty_agent.core.redis import key
 from beauty_agent.core.security import Security
 from beauty_agent.db.repositories.channels import ChannelAccountsRepository
 from beauty_agent.domain.enums import Channel
+from beauty_agent.runtime import Runtime
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"], include_in_schema=False)
@@ -93,3 +97,42 @@ async def vk_webhook(account_id: uuid.UUID, request: Request, session: SessionDe
     if update is not None:
         await _inbound(request).accept(account_id, update)
     return PlainTextResponse("ok")  # VK ждёт ровно «ok», иначе повторит событие
+
+
+@router.post("/max/{account_id}")
+async def max_webhook(
+    account_id: uuid.UUID,
+    request: Request,
+    session: SessionDep,
+    secret: Annotated[str | None, Header(alias="X-Max-Bot-Api-Secret")] = None,
+) -> Response:
+    if not _security(request).verify_webhook("max", account_id, secret):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED)
+    payload = await read_json(request)
+    found = await ChannelAccountsRepository(session).get_with_salon(account_id)
+    # Отключённый канал — тоже 200: иначе MAX повторяет обновление 8 часов и отписывает бота
+    if found is not None and found[0].channel is Channel.MAX:
+        update = max_channel.parse_update(payload)
+        if update is not None:
+            await _inbound(request).accept(account_id, update)
+    return Response(status_code=status.HTTP_200_OK)
+
+
+@router.post("/admin-bot")
+async def admin_bot_webhook(
+    request: Request,
+    secret: Annotated[str | None, Header(alias="X-Telegram-Bot-Api-Secret-Token")] = None,
+) -> Response:
+    """Админ-бот: кнопки и ответы администраторов. Обработка — в воркере, как у сообщений клиентов."""
+    runtime: Runtime = request.app.state.runtime
+    if runtime.admin_bot is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND)
+    if not _security(request).verify_webhook("admin_bot", ADMIN_BOT_ACCOUNT, secret):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED)
+    payload = await read_json(request)
+    update_id = payload.get("update_id")
+    if isinstance(update_id, int):
+        first = await runtime.redis.set(key("webhook", "admin_bot", update_id), "1", nx=True, ex=DEDUPE_TTL_S)
+        if first:
+            await runtime.queue.submit_admin_update(payload)
+    return Response(status_code=status.HTTP_200_OK)

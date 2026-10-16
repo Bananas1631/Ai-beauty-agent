@@ -1,0 +1,38 @@
+# Анкета подключения пилотного салона: poetry run python -m scripts.onboard_salon scripts/onboarding.example.toml
+# Токены сюда не пишутся — только имена переменных окружения, в которых они лежат.
+
+slug = "studio-lavanda"
+crm = "fake"                 # yclients — реальный салон, demo — слоты YCLIENTS без записи, fake — проверка без CRM
+# company_id = 555001        # ID филиала в YCLIENTS (для yclients и demo)
+reply_mode = "shadow"        # пилот: агент пишет черновики, администратор отправляет их кнопкой
+retention_days = 365         # переписка старше удаляется ночной задачей
+
+[privacy]                    # реквизиты оператора для страницы /privacy/<slug>
+operator_name = "ИП Иванова Анна Андреевна"
+inn = "500100732259"
+address = "Москва, ул. Примерная, д. 1"
+email = "privacy@lavanda.example"
+
+# [channels.telegram]
+# token_env = "LAVANDA_TELEGRAM_TOKEN"
+# business = true            # бот подключён к аккаунту салона (Telegram Business, нужен Premium)
+
+# [channels.vk]
+# group_id = 123456
+# token_env = "LAVANDA_VK_TOKEN"
+# confirmation_env = "LAVANDA_VK_CONFIRMATION"
+
+# [channels.max]
+# token_env = "LAVANDA_MAX_TOKEN"
+
+[[faq]]
+question = "Есть ли парковка?"
+answer = "Да, бесплатная парковка во дворе, въезд с переулка."
+
+[[faq]]
+question = "Можно оплатить картой?"
+answer = "Да, принимаем карты, СБП и наличные."
+
+[[faq]]
+question = "Можно прийти с ребёнком?"
+answer = "Да, в зале ожидания есть детский уголок."

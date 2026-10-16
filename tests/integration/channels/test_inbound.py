@@ -1,7 +1,6 @@
 """Мессенджеры на настоящих PostgreSQL и Redis: вебхуки, склейка, сервис диалога и outbox."""
 
 import uuid
-from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -9,67 +8,30 @@ from httpx import AsyncClient
 from redis.asyncio import Redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from tests.channel_helpers import (
+    SECURITY,
+    TOKEN,
+    RecordingNotifier,
+    RecordingQueue,
+    RecordingSender,
+    telegram_update,
+)
 
-from beauty_agent.adapters.channels.base import ChannelRejectedError, ChannelUnavailableError, Delivery
+from beauty_agent.adapters.channels.base import ChannelRejectedError, ChannelUnavailableError
 from beauty_agent.adapters.crm.factory import ProviderRegistry
 from beauty_agent.adapters.crm.fake import FakeCRM
 from beauty_agent.adapters.llm.fake import ScriptedLLM, reply
 from beauty_agent.catalog.importer import import_catalog
 from beauty_agent.conversation.debounce import Debouncer
 from beauty_agent.conversation.inbound import UNSUPPORTED_ANSWER, InboundGate, InboundProcessor
-from beauty_agent.conversation.notifications import AdminEvent, AdminEventKind
+from beauty_agent.conversation.notifications import AdminEventKind
 from beauty_agent.conversation.outbox import DeliveryStatus, Outbox
 from beauty_agent.conversation.service import ConversationService
-from beauty_agent.core.config import SecuritySettings, YclientsSettings
+from beauty_agent.core.config import YclientsSettings
 from beauty_agent.core.security import Security
 from beauty_agent.db.models import ChannelAccount, OutboundMessage, Salon
 from beauty_agent.db.repositories.channels import ChannelAccountsRepository
 from beauty_agent.domain.enums import Channel, CrmKind, OutboxStatus
-
-TOKEN = "123456789:AAH-valid_token_for_tests_000000000000"
-SECURITY = Security(SecuritySettings(), env="test")
-
-
-class RecordingQueue:
-    def __init__(self) -> None:
-        self.scheduled: list[tuple[uuid.UUID, str, str]] = []
-
-    async def schedule(self, account_id: uuid.UUID, chat_id: str, token: str, *, delay_s: float) -> None:
-        self.scheduled.append((account_id, chat_id, token))
-
-
-class RecordingSender:
-    def __init__(self, *failures: Exception) -> None:
-        self.sent: list[Delivery] = []
-        self.failures = list(failures)
-
-    async def send(self, credentials: dict[str, Any], delivery: Delivery) -> str | None:
-        assert credentials == {"token": TOKEN}  # учётные данные расшифрованы из БД
-        if self.failures:
-            raise self.failures.pop(0)
-        self.sent.append(delivery)
-        return f"msg-{len(self.sent)}"
-
-
-class RecordingNotifier:
-    def __init__(self) -> None:
-        self.events: list[AdminEvent] = []
-
-    async def notify(self, event: AdminEvent) -> None:
-        self.events.append(event)
-
-
-def telegram_update(update_id: int, text: str | None, *, chat_id: int = 555) -> dict[str, Any]:
-    message: dict[str, Any] = {
-        "message_id": update_id,
-        "from": {"id": chat_id, "is_bot": False, "first_name": "Анна"},
-        "chat": {"id": chat_id, "type": "private"},
-    }
-    if text is None:
-        message["voice"] = {"file_id": "v"}
-    else:
-        message["text"] = text
-    return {"update_id": update_id, "message": message}
 
 
 @pytest.fixture
@@ -128,7 +90,10 @@ async def test_three_quick_messages_give_one_answer(
     assert len(llm.calls) == 1
     user_message = llm.calls[0][0][-1].content
     assert user_message == "Здравствуйте\nхочу на маникюр\nв пятницу"
-    assert [delivery.text for delivery in sender.sent] == ["Здравствуйте! Записать вас на маникюр в пятницу?"]
+    assert len(sender.sent) == 1
+    # первый ответ без согласия клиента — с просьбой о согласии и ссылкой на политику салона
+    assert sender.sent[0].text.startswith("Здравствуйте! Записать вас на маникюр в пятницу?\n\nЧтобы записать вас")
+    assert "/privacy/" in sender.sent[0].text
     assert sender.sent[0].chat_id == "555"
 
 
@@ -165,7 +130,8 @@ async def test_retried_task_does_not_send_twice(
     await processor.process(account_id, chat_id, token)  # и ещё раз — «хотя бы один раз»
 
     assert len(llm.calls) == 1  # агент не отвечал заново: ответ уже сохранён
-    assert [delivery.text for delivery in sender.sent] == ["Ответ"]
+    assert len(sender.sent) == 1
+    assert sender.sent[0].text.startswith("Ответ\n\n")
     row = await session.scalar(select(OutboundMessage).where(OutboundMessage.channel_account_id == account.id))
     assert row is not None
     await session.refresh(row)

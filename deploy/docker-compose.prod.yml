@@ -35,6 +35,9 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+    volumes:
+      # корневой сертификат Минцифры для API мессенджера MAX (docs/integrations/max.md)
+      - ./certs:/certs:ro
     cap_drop:
       - ALL
     depends_on:

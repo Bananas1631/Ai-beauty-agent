@@ -4,6 +4,7 @@
 """
 
 from beauty_agent.db.base import Base
+from beauty_agent.db.models.admin import Draft, SalonAdmin
 from beauty_agent.db.models.booking import Booking
 from beauty_agent.db.models.catalog import Master, MasterService, Service
 from beauty_agent.db.models.client import Client, ClientIdentity
@@ -21,6 +22,7 @@ __all__ = [
     "ClientIdentity",
     "Consent",
     "Conversation",
+    "Draft",
     "KnowledgeChunk",
     "KnowledgeItem",
     "Master",
@@ -28,6 +30,7 @@ __all__ = [
     "Message",
     "OutboundMessage",
     "Salon",
+    "SalonAdmin",
     "Service",
     "ToolCall",
 ]

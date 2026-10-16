@@ -1,0 +1,11 @@
+{
+  "update_type": "message_created",
+  "timestamp": 1763380000123,
+  "message": {
+    "sender": {"user_id": 40021, "first_name": "Анна", "last_name": "", "name": "Анна", "is_bot": false},
+    "recipient": {"chat_id": 9000123, "chat_type": "dialog", "user_id": 777},
+    "timestamp": 1763380000100,
+    "body": {"mid": "mid.0000000000ab12cd", "seq": 115, "text": "Хочу на маникюр в пятницу", "attachments": null}
+  },
+  "user_locale": "ru"
+}

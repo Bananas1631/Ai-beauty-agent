@@ -196,6 +196,28 @@ class SecuritySettings(EnvSection):
         return bool(self.fernet_keys and self.webhook_key and self.jwt_secret)
 
 
+class MaxSettings(EnvSection):
+    """Мессенджер MAX: адрес Bot API и корневой сертификат Минцифры, на котором работает сервер API."""
+
+    model_config = SettingsConfigDict(env_prefix="MAX_")
+
+    api_url: str = "https://platform-api2.max.ru"
+    ca_bundle: str | None = None  # путь к russian_trusted_root_ca.pem (docs/integrations/max.md)
+
+
+class AdminBotSettings(EnvSection):
+    """Telegram-бот для администраторов салонов: один на весь сервис, салон выбирается привязкой."""
+
+    model_config = SettingsConfigDict(env_prefix="ADMIN_BOT_")
+
+    token: SecretStr | None = None
+    username: str | None = None  # для ссылки привязки t.me/<username>?start=<код>
+
+    @property
+    def enabled(self) -> bool:
+        return self.token is not None
+
+
 class Settings(BaseModel):
     """Все секции вместе. Каждая секция читает свои переменные при создании."""
 
@@ -208,6 +230,8 @@ class Settings(BaseModel):
     sentry: SentrySettings = Field(default_factory=SentrySettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    max_bot: MaxSettings = Field(default_factory=MaxSettings)
+    admin_bot: AdminBotSettings = Field(default_factory=AdminBotSettings)
 
 
 @lru_cache

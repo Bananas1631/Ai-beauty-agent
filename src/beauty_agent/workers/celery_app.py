@@ -12,6 +12,7 @@ from collections.abc import Coroutine
 from typing import Any
 
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import worker_init, worker_process_init, worker_process_shutdown
 from kombu import Exchange, Queue
 
@@ -63,6 +64,10 @@ def configure(app: Celery, settings: Settings) -> None:
         # воркерами (pidbox) и события задач. Без этих двух строк воркер бесконечно переподключается.
         worker_enable_remote_control=False,
         worker_send_task_events=False,
+        beat_schedule={
+            # ночью, когда салоны закрыты: удаление переписки старше срока хранения
+            "retention-nightly": {"task": "periodic.retention", "schedule": crontab(hour=3, minute=30)},
+        },
     )
 
 
@@ -78,7 +83,7 @@ def declare_queues(app: Celery) -> None:
             queue.bind(channel).declare()
 
 
-celery = Celery("beauty_agent", include=["beauty_agent.workers.messages"])
+celery = Celery("beauty_agent", include=["beauty_agent.workers.messages", "beauty_agent.workers.retention"])
 configure(celery, get_settings())
 
 

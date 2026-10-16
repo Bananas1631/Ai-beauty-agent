@@ -7,6 +7,7 @@
 """
 
 import asyncio
+import hashlib
 import re
 import urllib.robotparser
 import uuid
@@ -198,3 +199,45 @@ async def ingest_site(
         cost_rub=str(report.cost_rub),
     )
     return report
+
+
+@dataclass(frozen=True, slots=True)
+class FaqItem:
+    """Вопрос и ответ из анкеты онбординга: то, чего нет на сайте и в CRM (парковка, оплата, правила)."""
+
+    question: str
+    answer: str
+
+
+def faq_url(question: str) -> str:
+    """Стабильный ключ FAQ: повторная загрузка анкеты обновит ответ, а не создаст дубль."""
+    normalized = " ".join(question.lower().split())
+    return f"faq:{hashlib.sha256(normalized.encode()).hexdigest()[:24]}"
+
+
+async def ingest_faq(
+    session: AsyncSession, salon_id: uuid.UUID, embedder: EmbeddingsClient, items: list[FaqItem]
+) -> IngestReport:
+    """Ответы анкеты онбординга — в базу знаний как ручные FAQ (KnowledgeSource.FAQ)."""
+    total = IngestReport()
+    for item in items:
+        question, answer = item.question.strip(), item.answer.strip()
+        if not question or not answer:
+            total.errors.append("пустой вопрос или ответ пропущен")
+            continue
+        report = await index_text(
+            session,
+            salon_id,
+            embedder,
+            source=KnowledgeSource.FAQ,
+            url=faq_url(question),
+            title=question[:300],
+            text=f"Вопрос: {question}\nОтвет: {answer}",
+        )
+        total.pages_seen += report.pages_seen
+        total.pages_indexed += report.pages_indexed
+        total.pages_unchanged += report.pages_unchanged
+        total.chunks += report.chunks
+        total.tokens += report.tokens
+        total.cost_rub += report.cost_rub
+    return total

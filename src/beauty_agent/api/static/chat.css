@@ -166,3 +166,18 @@ body {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+.chat__note a,
+.policy a { color: var(--accent); }
+
+.policy {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  line-height: 1.55;
+}
+.policy h2 { margin-top: 0; }
+.policy h3 { font-size: 1rem; margin: 24px 0 8px; }
+.policy__meta { color: var(--muted); font-size: 0.9rem; }
+.policy code { background: var(--surface); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }

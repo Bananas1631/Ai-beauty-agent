@@ -74,3 +74,7 @@ class StateStore:
     async def save(self, salon_id: str, conversation_id: str, state: DialogState) -> None:
         payload = json.dumps(state.to_json(), ensure_ascii=False)
         await self.redis.set(self._key(salon_id, conversation_id), payload, ex=self.ttl_s)
+
+    async def forget(self, salon_id: str, conversation_id: str) -> None:
+        """Сбросить состояние: следующий ход восстановит историю из БД (правка администратора, отзыв согласия)."""
+        await self.redis.delete(self._key(salon_id, conversation_id))

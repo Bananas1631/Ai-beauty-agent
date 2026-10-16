@@ -160,6 +160,14 @@ class BookArgs(StrictArgs):
         return normalize_phone(value)
 
 
+class BookWithoutConsentArgs(StrictArgs):
+    """Запись без согласия клиента: аргументы не проверяются и никуда не сохраняются."""
+
+    option: int = Field(ge=1, le=3, description="Номер варианта из find_free_time, который выбрал клиент")
+    client_name: str | None = Field(None, max_length=60, description="Имя клиента")
+    phone: str | None = Field(None, max_length=32, description="Телефон клиента")
+
+
 class SalonInfoArgs(StrictArgs):
     question: str = Field(min_length=2, max_length=200, description="Вопрос клиента о салоне: адрес, часы, оплата…")
 
@@ -269,6 +277,19 @@ async def salon_info(args: SalonInfoArgs, ctx: ToolContext) -> dict[str, Any]:
     return {"found": True, "fragments": fragments[:3]}
 
 
+CONSENT_REQUIRED = "consent_required"
+
+
+async def book_without_consent(args: BookWithoutConsentArgs, ctx: ToolContext) -> dict[str, Any]:
+    return {
+        "status": CONSENT_REQUIRED,
+        "message": (
+            "Записать пока нельзя: клиент не дал согласие на обработку персональных данных. "
+            "Коротко попроси согласие — текст со ссылкой на политику система добавит к ответу сама."
+        ),
+    }
+
+
 async def handoff_to_admin(args: HandoffArgs, ctx: ToolContext) -> dict[str, Any]:
     ctx.handoff_reason = args.reason
     return {"status": "handed_off", "message": "Администратор получил диалог и ответит в рабочее время."}
@@ -304,8 +325,18 @@ TOOLS: tuple[Tool, ...] = (
 )
 
 
-def default_registry() -> ToolRegistry:
-    return ToolRegistry(TOOLS)
+def default_registry(*, personal_data_allowed: bool = True) -> ToolRegistry:
+    """Без согласия клиента (152-ФЗ) инструмент записи заменён заглушкой: телефон не уйдёт в CRM."""
+    if personal_data_allowed:
+        return ToolRegistry(TOOLS)
+    return ToolRegistry(
+        tuple(
+            Tool(tool.name, tool.description, BookWithoutConsentArgs, book_without_consent)
+            if tool.name == "book"
+            else tool
+            for tool in TOOLS
+        )
+    )
 
 
 # ---------------------------------------------------------------- источники данных без БД
