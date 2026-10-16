@@ -21,6 +21,7 @@ from beauty_agent.adapters.latency import SlowLLM
 from beauty_agent.adapters.llm.base import LLMClient
 from beauty_agent.adapters.llm.models import build_clients, build_embedder
 from beauty_agent.adapters.llm.offline import OfflineLLM
+from beauty_agent.agent.cache import AnswerCache
 from beauty_agent.agent.state import StateStore
 from beauty_agent.conversation.debounce import Debouncer
 from beauty_agent.conversation.handoff import Handoff
@@ -130,6 +131,12 @@ def create_runtime(
     admin_notifier = AdminBotNotifier(admin_api, session_factory, redis) if admin_api else None
     notifier = notifier or admin_notifier or LogNotifier()
     privacy = PrivacyService(redis, public_url=settings.app.public_url)
+    embedder = build_embedder(settings.llm)
+    answer_cache = (
+        AnswerCache(redis, semantic=settings.llm.semantic_cache, embedder=embedder)
+        if settings.llm.answer_cache
+        else None
+    )
     conversations = ConversationService(
         session_factory=session_factory,
         redis=redis,
@@ -138,9 +145,10 @@ def create_runtime(
         default_models=settings.llm.default_models,
         notifier=notifier,
         fallback_llm=fallback,
-        embedder=build_embedder(settings.llm),
+        embedder=embedder,
         tracer=tracer,
         privacy=privacy,
+        answer_cache=answer_cache,
     )
     vk = VkApi(http)
     max_bot = MaxBotApi(max_http, base_url=settings.max_bot.api_url)

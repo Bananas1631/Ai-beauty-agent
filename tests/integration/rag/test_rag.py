@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from beauty_agent.db.models import KnowledgeChunk, Salon
+from beauty_agent.db.repositories.knowledge import KnowledgeRepository
 from beauty_agent.rag.embeddings import HashingEmbeddings
 from beauty_agent.rag.ingest import ingest_site
 from beauty_agent.rag.retriever import HybridRetriever, RagSalonInfo, is_weak
@@ -112,3 +113,19 @@ async def test_rag_eval_recall(session: AsyncSession) -> None:
     assert report["questions"] == 30
     # Нижняя планка на офлайн-эмбеддингах: полнотекстовый поиск вытягивает точные слова
     assert report["recall_at_5"] >= 0.8, [r for r in report["results"] if r["rank"] is None]
+
+
+async def test_knowledge_version_changes_only_with_content(session: AsyncSession, salon: Salon) -> None:
+    """Версия базы знаний — часть ключа кэша ответов: меняется при новых фрагментах, иначе стабильна."""
+    knowledge = KnowledgeRepository(session, salon.id)
+    empty = await knowledge.version()
+    await ingest(session, salon)
+    await session.commit()
+    indexed = await knowledge.version()
+
+    await ingest(session, salon)  # страницы не изменились
+    await session.commit()
+
+    assert empty == "0:-"
+    assert indexed != empty
+    assert await knowledge.version() == indexed

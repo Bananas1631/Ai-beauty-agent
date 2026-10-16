@@ -59,6 +59,18 @@ LLM_COST_RUB = Counter(
     ["salon_id"],
     namespace=NAMESPACE,
 )
+LLM_CACHE = Counter(
+    "llm_cache_total",
+    "Кэш ответов LLM: hit — ответ из кэша, miss — не нашли, store — сохранили",
+    ["result"],
+    namespace=NAMESPACE,
+)
+LLM_CACHE_SAVED_RUB = Counter(
+    "llm_cache_saved_rub_total",
+    "Сэкономлено кэшем ответов: стоимость ответов модели, которые не пришлось считать заново",
+    ["salon_id"],
+    namespace=NAMESPACE,
+)
 QUEUE_MESSAGES = Gauge(
     "queue_messages",
     "Сообщений в очереди RabbitMQ в момент сбора",
@@ -77,6 +89,12 @@ LLM_BUDGET_RATIO = Gauge(
 
 def provider_error(provider: str, kind: str) -> None:
     PROVIDER_ERRORS.labels(provider=provider, kind=kind).inc()
+
+
+def llm_cache(result: str, *, salon_id: str | None = None, saved_rub: Decimal = Decimal(0)) -> None:
+    LLM_CACHE.labels(result=result).inc()
+    if salon_id is not None and saved_rub > 0:
+        LLM_CACHE_SAVED_RUB.labels(salon_id=salon_id).inc(float(saved_rub))
 
 
 def llm_cost(salon_id: str, cost_rub: Decimal) -> None:

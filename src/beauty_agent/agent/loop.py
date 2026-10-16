@@ -7,6 +7,9 @@
 4. Шаги кончились, модель недоступна или аргументы снова неверны — передача администратору.
 5. Выходные guardrails: чужой алфавит — одна перегенерация; цены и время сверяются с данными
    инструментов диалога, неподтверждённый ответ заменяется безопасным.
+6. Кэш (agent/cache.py): вопрос о салоне без цен и записи сначала ищется в кэше ответов; ответ,
+   прошедший выходные guardrails без цен и персональных данных, сохраняется туда — только если
+   модель не видела ничего о клиенте: ни истории диалога, ни профиля (иначе в ответе может быть имя).
 """
 
 import json
@@ -18,6 +21,7 @@ import structlog
 
 from beauty_agent.adapters.llm.base import ChatMessage, LLMClient, LLMResponse, Usage
 from beauty_agent.adapters.llm.traced import TracedLLM
+from beauty_agent.agent.cache import AnswerCache, Scope, cacheable_answer, normalize
 from beauty_agent.agent.context import ClientProfile, build_messages, maybe_summarize
 from beauty_agent.agent.guardrails import (
     ADMIN_ANSWER,
@@ -34,6 +38,7 @@ from beauty_agent.agent.guardrails import (
 from beauty_agent.agent.prompts import DEFAULT_PROMPT_VERSION, render_system_prompt
 from beauty_agent.agent.registry import ToolArgumentsError, ToolContext, ToolOutcome, ToolRegistry
 from beauty_agent.agent.state import DialogState
+from beauty_agent.core import metrics
 from beauty_agent.core.tracing import NoopTracer, Tracer, observe, use
 from beauty_agent.domain.errors import LLMBadResponseError, LLMUnavailableError
 
@@ -58,6 +63,8 @@ class AgentResult:
     cost_rub: Decimal = Decimal(0)
     latency_ms: int = 0
     llm_latency_ms: int = 0
+    cache_hit: bool = False
+    cache_saved_rub: Decimal = Decimal(0)  # сколько стоил бы ответ модели, если бы не кэш
 
     @property
     def handed_off(self) -> bool:
@@ -80,6 +87,7 @@ class Agent:
         max_steps: int = MAX_STEPS,
         summarizer: LLMClient | None = None,
         tracer: Tracer | None = None,
+        cache: AnswerCache | None = None,
     ) -> None:
         # Каждый вызов модели — наблюдение generation в трассе: модель, токены, стоимость
         self.llm = TracedLLM(llm)
@@ -88,6 +96,7 @@ class Agent:
         self.max_steps = max_steps
         self.summarizer = TracedLLM(summarizer or llm, name="llm.summary")
         self.tracer = tracer or NoopTracer()
+        self.cache = cache
 
     async def run(
         self,
@@ -125,6 +134,8 @@ class Agent:
                     "handoff_reason": result.handoff_reason,
                     "guardrail": result.guardrail,
                     "latency_ms": result.latency_ms,
+                    "cache_hit": result.cache_hit,
+                    "cache_saved_rub": str(result.cache_saved_rub),
                 },
             )
             trace.end()
@@ -159,6 +170,27 @@ class Agent:
             self._answer_without_llm(verdict, ctx, result)
             return
 
+        # Модель не знает о клиенте ничего: её ответ можно отдать другому клиенту
+        anonymous = not state.turns and state.summary is None and not knowledge and not (profile and profile.describe())
+        scope, normalized = await self._cache_scope(user_text, ctx)
+        if scope is not None and normalized is not None and self.cache is not None:
+            with observe("cache", kind="span", input=normalized) as span:
+                hit = await self.cache.get(scope, normalized)
+                span.update(
+                    output={
+                        "hit": hit is not None,
+                        "semantic": bool(hit and hit.semantic),
+                        "saved_rub": str(hit.cost_rub) if hit else "0",
+                    }
+                )
+            if hit is not None:
+                result.text = hit.text
+                result.cache_hit = True
+                result.cache_saved_rub = hit.cost_rub
+                metrics.llm_cache("hit", salon_id=ctx.salon_id, saved_rub=hit.cost_rub)
+                return
+            metrics.llm_cache("miss")
+
         summary = await maybe_summarize(state, self.summarizer)
         if summary is not None:
             result.add(summary)
@@ -182,6 +214,27 @@ class Agent:
         with observe("guardrails.output", kind="guardrail", input=text) as check:
             result.text = await self._checked_output(text, messages, ctx, state, result)
             check.update(output={"text": result.text, "guardrail": result.guardrail})
+        if (
+            anonymous
+            and scope is not None
+            and normalized is not None
+            and self.cache is not None
+            and cacheable_answer(
+                result.text, result.tool_calls, handed_off=result.handed_off, guardrail=result.guardrail
+            )
+        ):
+            await self.cache.put(scope, normalized, result.text, result.cost_rub)
+            metrics.llm_cache("store")
+
+    async def _cache_scope(self, user_text: str, ctx: ToolContext) -> tuple[Scope | None, str | None]:
+        """Ключ кэша для вопроса о салоне; (None, None) — вопрос не кэшируется или кэша нет."""
+        normalized = normalize(user_text) if self.cache is not None else None
+        if normalized is None or ctx.knowledge_version is None:
+            return None, None
+        version = await ctx.knowledge_version()
+        if ctx.release is not None:
+            await ctx.release()  # запрос версии не держит соединение, пока агент ждёт модель
+        return Scope(ctx.salon_id, self.prompt_version, self.llm.model_key, version), normalized
 
     def _answer_without_llm(self, verdict: InputVerdict, ctx: ToolContext, result: AgentResult) -> None:
         result.guardrail = verdict.value

@@ -306,6 +306,90 @@
           "legendFormat": "{{salon_id}}"
         }
       ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Доля ответов из кэша LLM",
+      "description": "Попадания среди кэшируемых вопросов о салоне (ADR 011)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(rate(beauty_agent_llm_cache_total{result=\"hit\"}[1h])) / clamp_min(sum(rate(beauty_agent_llm_cache_total{result=~\"hit|miss\"}[1h])), 1e-9)",
+          "legendFormat": "hit rate"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Сэкономлено кэшем LLM за сутки, ₽",
+      "description": "Стоимость ответов модели, отданных из кэша",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyRUB"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (salon_id) (increase(beauty_agent_llm_cache_saved_rub_total[24h]))",
+          "legendFormat": "{{salon_id}}"
+        }
+      ]
     }
   ]
 }

@@ -1,0 +1,22 @@
+{"id": "faq-001", "tags": ["faq", "address"], "messages": ["Где вы находитесь?"], "expect": {"outcome": "answer", "must_contain": ["Примерная"], "tools": ["salon_info"]}}
+{"id": "faq-002", "tags": ["faq", "address", "repeat"], "messages": ["где вы находитесь"], "expect": {"outcome": "answer", "must_contain": ["Примерная"], "tools": ["salon_info"]}}
+{"id": "faq-003", "tags": ["faq", "address", "repeat"], "messages": ["Где вы находитесь??"], "expect": {"outcome": "answer", "must_contain": ["Примерная"], "tools": ["salon_info"]}}
+{"id": "faq-004", "tags": ["faq", "address", "paraphrase"], "messages": ["Подскажите, где вы находитесь?"], "expect": {"outcome": "answer", "must_contain": ["Примерная"], "tools": ["salon_info"]}}
+{"id": "faq-005", "tags": ["faq", "address", "paraphrase"], "messages": ["Какой у вас адрес?"], "expect": {"outcome": "answer", "must_contain": ["Примерная"], "tools": ["salon_info"]}}
+{"id": "faq-006", "tags": ["faq", "address", "paraphrase"], "messages": ["Как до вас добраться?"], "expect": {"outcome": "answer", "must_contain": ["Примерная"], "tools": ["salon_info"]}}
+{"id": "faq-007", "tags": ["faq", "hours"], "messages": ["Какой у вас режим работы?"], "expect": {"outcome": "answer", "must_contain": ["10", "20"], "tools": ["salon_info"]}}
+{"id": "faq-008", "tags": ["faq", "hours", "repeat"], "messages": ["какой у вас режим работы"], "expect": {"outcome": "answer", "must_contain": ["10", "20"], "tools": ["salon_info"]}}
+{"id": "faq-009", "tags": ["faq", "hours", "paraphrase"], "messages": ["Какой режим работы у салона?"], "expect": {"outcome": "answer", "must_contain": ["10", "20"], "tools": ["salon_info"]}}
+{"id": "faq-010", "tags": ["faq", "hours", "trap"], "messages": ["Вы работаете в воскресенье?"], "expect": {"outcome": "answer", "must_contain": ["10", "20"], "must_not_contain": ["выходной"], "tools": ["salon_info"]}}
+{"id": "faq-011", "tags": ["faq", "hours", "trap"], "messages": ["Вы работаете в субботу?"], "expect": {"outcome": "answer", "must_contain": ["10", "20"], "must_not_contain": ["выходной"], "tools": ["salon_info"]}}
+{"id": "faq-012", "tags": ["faq", "hours", "trap"], "messages": ["До скольки вы работаете?"], "expect": {"outcome": "answer", "must_contain": ["20"], "tools": ["salon_info"]}}
+{"id": "faq-013", "tags": ["faq", "parking"], "messages": ["Есть ли у вас парковка?"], "expect": {"outcome": "answer", "tools": ["salon_info"]}}
+{"id": "faq-014", "tags": ["faq", "parking", "repeat"], "messages": ["Есть ли у вас парковка"], "expect": {"outcome": "answer", "tools": ["salon_info"]}}
+{"id": "faq-015", "tags": ["faq", "parking", "paraphrase"], "messages": ["А парковка у вас есть?"], "expect": {"outcome": "answer", "tools": ["salon_info"]}}
+{"id": "faq-016", "tags": ["faq", "payment"], "messages": ["Можно оплатить картой?"], "expect": {"outcome": "answer", "tools": ["salon_info"]}}
+{"id": "faq-017", "tags": ["faq", "payment", "repeat"], "messages": ["можно оплатить картой"], "expect": {"outcome": "answer", "tools": ["salon_info"]}}
+{"id": "faq-018", "tags": ["faq", "payment", "trap"], "messages": ["Можно оплатить наличными?"], "expect": {"outcome": "answer", "tools": ["salon_info"]}}
+{"id": "faq-019", "tags": ["faq", "not_cached"], "messages": ["Сколько стоит маникюр с покрытием?"], "expect": {"outcome": "answer", "must_contain": ["2500"], "tools": ["find_service"]}}
+{"id": "faq-020", "tags": ["faq", "not_cached"], "messages": ["Сколько стоит маникюр с покрытием?"], "expect": {"outcome": "answer", "must_contain": ["2500"], "tools": ["find_service"]}}
+{"id": "faq-021", "tags": ["faq", "not_cached"], "messages": ["Где вы находитесь? Мой телефон +7 916 150-22-39"], "expect": {"outcome": "no_booking", "must_not_contain": ["150-22-39"]}}
+{"id": "faq-022", "tags": ["faq", "not_cached"], "messages": ["Где вы находитесь? Хочу записаться на маникюр"], "expect": {"outcome": "no_booking"}}

@@ -129,6 +129,9 @@ class LLMSettings(EnvSection):
     prices: dict[str, tuple[Decimal, Decimal]] = Field(default_factory=_default_prices)
     # Порядок по умолчанию: основная модель, затем резервные. Салон может задать свой
     default_models: list[str] = Field(default_factory=lambda: ["qwen3-235b", "gigachat-2-lite"])
+    # Кэш ответов на вопросы о салоне (agent/cache.py, ADR 011); семантический — эксперимент
+    answer_cache: bool = True
+    semantic_cache: bool = False
 
 
 class YclientsSettings(EnvSection):

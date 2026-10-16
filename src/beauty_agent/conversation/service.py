@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from beauty_agent.adapters.crm.factory import ProviderRegistry
 from beauty_agent.adapters.llm.base import LLMClient
 from beauty_agent.agent.budget import BUDGET_EXCEEDED_ANSWER, DailyBudget
+from beauty_agent.agent.cache import AnswerCache
 from beauty_agent.agent.loop import HANDOFF_ANSWER, Agent, AgentResult
 from beauty_agent.agent.registry import ToolContext, ToolOutcome
 from beauty_agent.agent.router import build_router
@@ -52,6 +53,7 @@ from beauty_agent.db.repositories.admins import DraftsRepository
 from beauty_agent.db.repositories.bookings import SqlBookingLedger
 from beauty_agent.db.repositories.clients import ClientsRepository
 from beauty_agent.db.repositories.conversations import ConversationsRepository
+from beauty_agent.db.repositories.knowledge import KnowledgeRepository
 from beauty_agent.domain.booking_engine.service import BookingService
 from beauty_agent.domain.consent import (
     WITHDRAWN_ANSWER,
@@ -143,6 +145,7 @@ class ConversationService:
         tracer: Tracer | None = None,
         clock: Callable[[], datetime] | None = None,
         privacy: PrivacyService | None = None,
+        answer_cache: AnswerCache | None = None,
     ) -> None:
         self.session_factory = session_factory
         self.redis = redis
@@ -156,6 +159,7 @@ class ConversationService:
         self.clock = clock or (lambda: datetime.now(UTC))
         self.states = StateStore(redis)
         self.privacy = privacy or PrivacyService(redis, public_url="http://localhost:8000")
+        self.answer_cache = answer_cache
         self.budget = DailyBudget(redis)
         self.lock = RedisLock(redis)
 
@@ -415,12 +419,14 @@ class ConversationService:
                 salon_info=RagSalonInfo(HybridRetriever(tool_session, salon.id, self.embedder)),
                 client_id=client.id,
                 release=release,
+                knowledge_version=KnowledgeRepository(tool_session, salon.id).version,
             )
             agent = Agent(
                 router,
                 default_registry(personal_data_allowed=allowed),
                 prompt_version=config.prompt_version,
                 tracer=self.tracer,
+                cache=self.answer_cache,
             )
             result = await agent.run(text, ctx, state, profile=profile)
         answer = result.text

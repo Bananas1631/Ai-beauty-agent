@@ -77,6 +77,16 @@ def strip_personal_data(text: str) -> str:
     return _EMAIL.sub("[e-mail скрыт]", _PHONE.sub(_phone, text))
 
 
+def contacts_in(text: str) -> set[str]:
+    """Телефоны и e-mail из текста в каноническом виде: цифры с 7 вместо 8 в начале, e-mail строчными."""
+    phones = set()
+    for match in _PHONE.finditer(text):
+        digits = "".join(char for char in match.group() if char.isdigit())
+        if 10 <= len(digits) <= 15:
+            phones.add("7" + digits[1:] if len(digits) == 11 and digits.startswith("8") else digits)
+    return phones | {email.lower() for email in _EMAIL.findall(text)}
+
+
 def consent_request(policy_url: str) -> str:
     return (
         "Чтобы записать вас, нужно согласие на обработку персональных данных (имя и телефон) "

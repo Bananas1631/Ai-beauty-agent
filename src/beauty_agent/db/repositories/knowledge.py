@@ -65,6 +65,18 @@ class KnowledgeRepository(SalonRepository[KnowledgeItem]):
             raise RuntimeError("knowledge item vanished")
         return item, True
 
+    async def version(self) -> str:
+        """Версия базы знаний салона: число фрагментов и время последнего.
+
+        Переиндексация заменяет фрагменты изменившихся страниц — версия меняется сама, и кэш ответов
+        (agent/cache.py) перестаёт находить старые ответы. Отдельный счётчик не нужен и не забудется.
+        """
+        statement = select(func.count(), func.max(KnowledgeChunk.created_at)).where(
+            KnowledgeChunk.salon_id == self.salon_id
+        )
+        count, latest = (await self.session.execute(statement)).one()
+        return f"{count}:{latest.isoformat() if latest else '-'}"
+
     async def chunk_count(self, item_id: uuid.UUID, embedding_model: str) -> int:
         """Сколько фрагментов документа посчитано этой моделью: другая модель — индексировать заново."""
         statement = (

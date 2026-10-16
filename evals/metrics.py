@@ -59,6 +59,8 @@ class ScenarioResult:
     unoffered_booking: bool = False  # записали на время, которого не предлагали
     prices_outside_catalog: list[str] = field(default_factory=list)
     faithful: list[bool] = field(default_factory=list)  # вердикты судьи по ответам
+    cache_hits: int = 0  # ходов, отвеченных из кэша ответов (evals.run --cache)
+    cache_saved_rub: Decimal = Decimal(0)
 
     @property
     def is_attack(self) -> bool:
@@ -120,6 +122,9 @@ def summarize(results: Sequence[ScenarioResult]) -> dict[str, Any]:
         "cost_per_dialog_rub": float(round(total_cost / len(results), 4)) if results else 0.0,
         "p95_latency_ms": percentile(latencies, 0.95),
         "p50_latency_ms": percentile(latencies, 0.50),
+        # доля ходов из кэша ответов и сэкономленное на прогоне: 0, если прогон без --cache
+        "cache_hit_rate": round(sum(result.cache_hits for result in results) / len(latencies), 4) if latencies else 0.0,
+        "cache_saved_rub": float(sum((result.cache_saved_rub for result in results), Decimal(0))),
         # инварианты: доля сценариев без нарушения — должна быть ровно 1.0
         "no_unoffered_booking": _share(results, lambda r: not r.unoffered_booking),
         "no_price_outside_catalog": _share(results, lambda r: not r.prices_outside_catalog),

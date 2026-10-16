@@ -58,6 +58,8 @@ class ToolContext:
     # Вызывается после каждого инструмента: вернуть соединение с БД в пул, чтобы оно не простаивало,
     # пока агент ждёт ответ модели (docs/performance.md, нагрузочный тест)
     release: Callable[[], Awaitable[None]] | None = None
+    # Версия базы знаний салона — часть ключа кэша ответов (agent/cache.py); None — кэш не используется
+    knowledge_version: Callable[[], Awaitable[str]] | None = None
 
 
 Handler = Callable[[Any, ToolContext], Awaitable[dict[str, Any]]]

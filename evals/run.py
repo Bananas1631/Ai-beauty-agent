@@ -2,11 +2,16 @@
 
     poetry run python -m evals.run --dataset booking/v2,attacks/v1 --models offline
     poetry run python -m evals.run --dataset booking/v2 --models qwen3-235b,gigachat-2-lite --judge qwen3-235b
+    poetry run python -m evals.run --dataset faq/v1,booking/v2,attacks/v1 --cache semantic
 
 Каждый сценарий получает свой фейковый CRM и свой Redis в памяти: сценарии не мешают друг другу.
 «Сейчас» зафиксировано (понедельник, 19 октября 2026, 09:00 МСК) — свободные окна одни и те же
 при каждом прогоне. Кроме качества считаются инварианты: запись только на предложенное время,
 цены только из каталога, провокации не срабатывают. Отчёт сохраняется в evals/reports/.
+
+--cache exact|semantic включает кэш ответов (agent/cache.py, ADR 011): один кэш на прогон модели,
+как у одного салона, а сценарии идут по порядку — доля попаданий одна и та же при каждом прогоне.
+Кэш включают, только если точность с ним не ниже, чем с --cache off.
 """
 
 import argparse
@@ -25,8 +30,9 @@ from fakeredis import FakeAsyncRedis
 
 from beauty_agent.adapters.crm.fake import FAKE_SALON, FAKE_SERVICES, FakeCRM
 from beauty_agent.adapters.llm.base import LLMClient
-from beauty_agent.adapters.llm.models import build_clients
+from beauty_agent.adapters.llm.models import build_clients, build_embedder
 from beauty_agent.adapters.llm.offline import OfflineLLM
+from beauty_agent.agent.cache import CACHEABLE_TOOLS, AnswerCache
 from beauty_agent.agent.loop import Agent
 from beauty_agent.agent.prompts import DEFAULT_PROMPT_VERSION
 from beauty_agent.agent.registry import ToolContext
@@ -58,6 +64,13 @@ CATALOG_PRICES = frozenset(
     int(price) for service in FAKE_SERVICES for price in (service.price_min, service.price_max) if price is not None
 )
 _DATASET_NAME = re.compile(r"^[a-z0-9_]+/v\d+$")
+CACHE_MODES = ("off", "exact", "semantic")
+CACHE_SALON_ID = "eval"  # с кэшем все сценарии — клиенты одного салона
+
+
+async def card_version() -> str:
+    """Версия базы знаний в evals: карточка фейкового салона не меняется."""
+    return "fake-card"
 
 
 class NullLedger(MemoryLedger):
@@ -120,14 +133,22 @@ def judge(scenario: Scenario, outcome: Outcome, crm: FakeCRM, answers: list[str]
     return reasons
 
 
-def tools_ok(scenario: Scenario, tools: list[str]) -> bool:
-    expected_present = all(name in tools for name in scenario.expect.tools)
+def tools_ok(scenario: Scenario, tools: list[str], *, cache_hits: int = 0) -> bool:
+    """Ответ из кэша когда-то получен через salon_info: такой инструмент считается вызванным."""
+    expected_present = all(
+        name in tools or (cache_hits > 0 and name in CACHEABLE_TOOLS) for name in scenario.expect.tools
+    )
     no_stray_booking = scenario.expect.outcome == "booking" or "book" not in tools
     return expected_present and no_stray_booking
 
 
 async def run_scenario(
-    scenario: Scenario, llm: LLMClient, *, prompt_version: str, judge_model: Judge | None = None
+    scenario: Scenario,
+    llm: LLMClient,
+    *,
+    prompt_version: str,
+    judge_model: Judge | None = None,
+    cache: AnswerCache | None = None,
 ) -> ScenarioResult:
     redis = FakeAsyncRedis(decode_responses=True)
     crm = FakeCRM(clock=lambda: NOW)
@@ -135,7 +156,7 @@ async def run_scenario(
         salon_id=f"eval-{scenario.id}", timezone=FAKE_SALON.timezone, provider=crm, redis=redis, ledger=NullLedger()
     )
     booking.offered = set()
-    agent = Agent(llm, default_registry(), prompt_version=prompt_version)
+    agent = Agent(llm, default_registry(), prompt_version=prompt_version, cache=cache)
     state = DialogState()
     answers: list[str] = []
     tools: list[str] = []
@@ -143,27 +164,34 @@ async def run_scenario(
     guardrails: list[str] = []
     faithful: list[bool] = []
     cost = Decimal(0)
+    cache_hits = 0
+    saved = Decimal(0)
     outcome: Outcome = "answer"
     error: str | None = None
     try:
         for text in scenario.messages:
             ctx = ToolContext(
-                salon_id=f"eval-{scenario.id}",
+                salon_id=CACHE_SALON_ID if cache else f"eval-{scenario.id}",
                 salon_name=FAKE_SALON.name,
                 conversation_id=f"eval-{scenario.id}",
                 now=NOW,
                 booking=booking,
                 catalog=ProviderCatalog(booking),
                 salon_info=CardSalonInfo(crm),
+                knowledge_version=card_version if cache else None,
             )
             result = await agent.run(text, ctx, state)
             answers.append(result.text)
             tools.extend(item.name for item in result.tool_calls)
             latencies.append(result.latency_ms)
             cost += result.cost_rub
+            if result.cache_hit:
+                cache_hits += 1
+                saved += result.cache_saved_rub
             if result.guardrail:
                 guardrails.append(result.guardrail)
-            if judge_model is not None and result.guardrail is None and not result.handed_off:
+            # ответ из кэша судья проверил, когда его считала модель; фактов этого диалога у него нет
+            if judge_model is not None and result.guardrail is None and not result.handed_off and not result.cache_hit:
                 faithful.append(await judge_model.is_faithful(text, result.text, state.facts))
             if result.handed_off:
                 outcome = "handoff"
@@ -185,7 +213,7 @@ async def run_scenario(
         outcome=outcome,
         answers=answers,
         tools=tools,
-        tools_ok=tools_ok(scenario, tools),
+        tools_ok=tools_ok(scenario, tools, cache_hits=cache_hits),
         cost_rub=cost,
         turn_latencies_ms=latencies,
         guardrails=guardrails,
@@ -194,7 +222,18 @@ async def run_scenario(
         unoffered_booking=unoffered,
         prices_outside_catalog=outside,
         faithful=faithful,
+        cache_hits=cache_hits,
+        cache_saved_rub=saved,
     )
+
+
+def make_cache(mode: str) -> AnswerCache | None:
+    if mode == "off":
+        return None
+    redis = FakeAsyncRedis(decode_responses=True)
+    if mode == "exact":
+        return AnswerCache(redis)
+    return AnswerCache(redis, semantic=True, embedder=build_embedder(get_settings().llm))
 
 
 async def run_model(
@@ -204,19 +243,23 @@ async def run_model(
     concurrency: int,
     prompt_version: str,
     judge_model: Judge | None = None,
+    cache_mode: str = "off",
 ) -> list[ScenarioResult]:
-    semaphore = asyncio.Semaphore(concurrency)
+    cache = make_cache(cache_mode)
+    semaphore = asyncio.Semaphore(concurrency if cache is None else 1)  # с кэшем порядок важен
 
     async def limited(scenario: Scenario) -> ScenarioResult:
         async with semaphore:
             try:
                 return await asyncio.wait_for(
-                    run_scenario(scenario, llm, prompt_version=prompt_version, judge_model=judge_model),
+                    run_scenario(scenario, llm, prompt_version=prompt_version, judge_model=judge_model, cache=cache),
                     SCENARIO_TIMEOUT_S,
                 )
             except TimeoutError:
                 return ScenarioResult(scenario, False, "answer", [], [], False, Decimal(0), [], reasons=["таймаут"])
 
+    if cache is not None:  # по порядку датасета: сначала вопрос, потом его перефразировки
+        return [await limited(scenario) for scenario in scenarios]
     return list(await asyncio.gather(*(limited(scenario) for scenario in scenarios)))
 
 
@@ -245,13 +288,14 @@ def pick_judge(key: str) -> Judge:
 
 def render_markdown(dataset: str, prompt_version: str, report: dict[str, Any]) -> str:
     lines = [
-        f"# Evals: {dataset}, промпт {prompt_version}",
+        f"# Evals: {dataset}, промпт {prompt_version}, кэш ответов: {report.get('cache', 'off')}",
         "",
         f"Прогон {report['started_at']}. «Сейчас» в сценариях: {NOW:%Y-%m-%d %H:%M} МСК, фейковый CRM. "
         f"Судья: {report.get('judge', 'rules')}.",
         "",
-        "| Модель | Успех | Точность записи | Эскалации верно | Инструменты | Faithfulness | ₽ за диалог | p95, мс |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Модель | Успех | Точность записи | Эскалации верно | Инструменты | Faithfulness | ₽ за диалог "
+        "| p95, мс | Из кэша |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for model, data in report["models"].items():
         m = data["metrics"]
@@ -259,7 +303,7 @@ def render_markdown(dataset: str, prompt_version: str, report: dict[str, Any]) -
         lines.append(
             f"| {model} | {m['success_rate']:.0%} | {m['booking_accuracy']:.0%} | {m['handoff_accuracy']:.0%} "
             f"| {m['tool_accuracy']:.0%} | {faithfulness} | {m['cost_per_dialog_rub']:.4f} "
-            f"| {m['p95_latency_ms']:.0f} |"
+            f"| {m['p95_latency_ms']:.0f} | {m.get('cache_hit_rate', 0.0):.0%} |"
         )
     lines += ["", "Инварианты (должны быть 100%):", ""]
     for model, data in report["models"].items():
@@ -290,6 +334,7 @@ def scenario_json(result: ScenarioResult) -> dict[str, Any]:
         "unoffered_booking": result.unoffered_booking,
         "prices_outside_catalog": result.prices_outside_catalog,
         "faithful": result.faithful,
+        "cache_hits": result.cache_hits,
         "reasons": result.reasons,
         "answers": result.answers,
     }
@@ -311,13 +356,19 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
         "dataset": args.dataset,
         "prompt_version": args.prompt,
         "judge": judge_model.name,
+        "cache": args.cache,
         "started_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "date": date.today().isoformat(),
         "models": {},
     }
     for key, llm in pick_models(args.models.split(",")).items():
         results = await run_model(
-            scenarios, llm, concurrency=args.concurrency, prompt_version=args.prompt, judge_model=judge_model
+            scenarios,
+            llm,
+            concurrency=args.concurrency,
+            prompt_version=args.prompt,
+            judge_model=judge_model,
+            cache_mode=args.cache,
         )
         report["models"][key] = {
             "metrics": summarize(results),
@@ -329,6 +380,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
 def save_report(report: dict[str, Any], directory: Path) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     stem = f"{report['started_at'][:10]}-{report['dataset'].replace('/', '-').replace(',', '+')}"
+    if report.get("cache", "off") != "off":
+        stem += f"-cache-{report['cache']}"
     payload = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     (directory / f"{stem}.json").write_text(payload, encoding="utf-8", newline="\n")
     path = directory / f"{stem}.md"
@@ -346,6 +399,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--limit", type=int, default=0, help="только первые N сценариев каждого датасета")
     parser.add_argument("--tag", help="только сценарии с этим тегом")
+    parser.add_argument("--cache", choices=CACHE_MODES, default="off", help="кэш ответов LLM (ADR 011)")
     parser.add_argument("--report-dir", type=Path, default=REPORTS)
     parser.add_argument("--output", type=Path, help="сохранить JSON отчёта ещё и сюда (для гейта в CI)")
     parser.add_argument("--no-report", action="store_true", help="не сохранять отчёт в evals/reports")

@@ -69,11 +69,23 @@ jobs:
           --output evals-report.json
       - name: Quality gate
         run: poetry run python -m evals.gate --report evals-report.json --baseline evals/reports/baseline.json
+      # Кэш ответов (ADR 011): точный включён в проде, семантический — эксперимент. Оба должны
+      # держать те же пороги, что прогон без кэша; иначе кэш выключают.
+      - name: Evals with answer cache
+        if: github.event_name != 'pull_request'
+        run: |
+          for mode in exact semantic; do
+            poetry run python -m evals.run --dataset faq/v1,booking/v2,attacks/v1 \
+              --models "$EVAL_MODEL" --judge "$EVAL_JUDGE" --cache "$mode" \
+              --no-report --output "evals-report-cache-$mode.json"
+            poetry run python -m evals.gate --report "evals-report-cache-$mode.json" \
+              --baseline evals/reports/baseline.json
+          done
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: evals-report
-          path: evals-report.json
+          path: evals-report*.json
           if-no-files-found: ignore
           retention-days: 30
