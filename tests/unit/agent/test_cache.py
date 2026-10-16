@@ -16,6 +16,7 @@ from beauty_agent.agent.loop import Agent
 from beauty_agent.agent.registry import ToolContext, ToolOutcome
 from beauty_agent.agent.state import DialogState
 from beauty_agent.agent.tools import default_registry
+from beauty_agent.core.redis import key
 from beauty_agent.domain.consent import contacts_in
 from beauty_agent.rag.embeddings import HashingEmbeddings
 
@@ -187,6 +188,7 @@ async def test_repeated_question_is_answered_without_llm(redis: FakeAsyncRedis, 
     assert second.cache_hit
     assert second.text == first.text
     assert len(llm.calls) == 2  # оба вызова — на первый вопрос, второй ответ модель не считала
+    assert await redis.keys(key("llm_cache", "*"))  # ответ лежит в кэше под этим шаблоном
     assert second.cost_rub == 0
     assert second.cache_saved_rub == first.cost_rub
     assert cache_counter("hit") == hits_before + 1
@@ -204,7 +206,7 @@ async def test_price_question_always_goes_to_llm(redis: FakeAsyncRedis, ctx: Too
     assert not first.cache_hit
     assert not second.cache_hit
     assert len(llm.calls) == 4
-    assert await redis.keys("llm_cache*") == []
+    assert await redis.keys(key("llm_cache", "*")) == []
 
 
 async def test_new_knowledge_version_misses(redis: FakeAsyncRedis, ctx: ToolContext) -> None:
