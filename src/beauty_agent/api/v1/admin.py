@@ -12,8 +12,6 @@
   OFFSET на длинной истории перебирал бы все пропущенные строки.
 """
 
-import base64
-import json
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -24,10 +22,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from beauty_agent.api.deps import SessionDep, client_ip, enforce
+from beauty_agent.api.pagination import decode_cursor, encode_cursor
 from beauty_agent.core.rate_limit import ADMIN_USER_LIMIT, TOKEN_IP_LIMIT
 from beauty_agent.core.security import AdminClaims, InvalidTokenError, RefreshTokens, Security
 from beauty_agent.db.repositories.admins import AdminsRepository
-from beauty_agent.db.repositories.conversations import ConversationsRepository, Cursor
+from beauty_agent.db.repositories.conversations import ConversationsRepository
 from beauty_agent.domain.enums import AdminRole, Channel, ConversationStatus, MessageRole
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -70,24 +69,6 @@ async def current_owner(admin: AdminDep) -> AdminClaims:
 OwnerDep = Annotated[AdminClaims, Depends(current_owner)]
 Limit = Annotated[int, Query(ge=1, le=100)]
 CursorParam = Annotated[str | None, Query(max_length=200)]
-
-
-def encode_cursor(at: datetime, id_: uuid.UUID) -> str:
-    raw = json.dumps({"t": at.isoformat(), "id": str(id_)}).encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def decode_cursor(value: str | None) -> Cursor | None:
-    if not value:
-        return None
-    try:
-        data = json.loads(base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)))
-        at = datetime.fromisoformat(data["t"])
-        if at.tzinfo is None:
-            raise ValueError("время курсора без часового пояса")
-        return Cursor(at, uuid.UUID(data["id"]))
-    except (ValueError, KeyError, TypeError) as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Неверный курсор") from exc
 
 
 class ConversationOut(BaseModel):

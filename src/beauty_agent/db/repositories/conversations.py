@@ -18,7 +18,7 @@ from beauty_agent.agent.registry import ToolOutcome
 from beauty_agent.agent.state import MAX_FACTS, MAX_STORED_TURNS, DialogState, Turn
 from beauty_agent.db.models import Client, Conversation, Message, ToolCall
 from beauty_agent.db.repositories.base import SalonRepository
-from beauty_agent.domain.enums import Channel, ConversationStatus, MessageRole
+from beauty_agent.domain.enums import Channel, ConversationStatus, MessageRole, MessageStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +57,8 @@ class ConversationsRepository(SalonRepository[Conversation]):
         tokens_in: int | None = None,
         tokens_out: int | None = None,
         cost_rub: Decimal | None = None,
+        in_reply_to: uuid.UUID | None = None,
+        status: MessageStatus | None = None,
     ) -> uuid.UUID | None:
         """Сохраняет сообщение. Повтор вебхука с тем же external_id — None, дубль не создаётся.
 
@@ -74,6 +76,8 @@ class ConversationsRepository(SalonRepository[Conversation]):
                 tokens_in=tokens_in,
                 tokens_out=tokens_out,
                 cost_rub=cost_rub,
+                in_reply_to=in_reply_to,
+                status=status,
                 created_at=func.clock_timestamp(),
                 updated_at=func.clock_timestamp(),
             )
@@ -88,6 +92,53 @@ class ConversationsRepository(SalonRepository[Conversation]):
                 .values(last_message_at=func.clock_timestamp())
             )
         return message_id
+
+    async def message(self, message_id: uuid.UUID) -> Message | None:
+        return await self.session.scalar(
+            select(Message).where(Message.salon_id == self.salon_id, Message.id == message_id)
+        )
+
+    async def message_by_external_id(self, conversation_id: uuid.UUID, external_id: str) -> Message | None:
+        return await self.session.scalar(
+            select(Message).where(
+                Message.salon_id == self.salon_id,
+                Message.conversation_id == conversation_id,
+                Message.external_id == external_id,
+            )
+        )
+
+    async def reply_of(self, message_id: uuid.UUID) -> Message | None:
+        """Ответ агента или администратора на сообщение клиента."""
+        return await self.session.scalar(
+            select(Message)
+            .where(Message.salon_id == self.salon_id, Message.in_reply_to == message_id)
+            .order_by(Message.created_at.desc())
+            .limit(1)
+        )
+
+    async def set_message_status(
+        self, message_id: uuid.UUID, status: MessageStatus, *, error: str | None = None
+    ) -> None:
+        await self.session.execute(
+            update(Message)
+            .where(Message.salon_id == self.salon_id, Message.id == message_id)
+            .values(status=status, error=error[:300] if error else None)
+        )
+
+    async def client_history(
+        self, client_id: uuid.UUID, *, limit: int, before: "Cursor | None" = None
+    ) -> list[Message]:
+        """Сообщения всех диалогов клиента, новые сверху, keyset-пагинация по (время, id)."""
+        statement = (
+            select(Message)
+            .join(Conversation, Conversation.id == Message.conversation_id)
+            .where(Message.salon_id == self.salon_id, Conversation.client_id == client_id)
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(limit)
+        )
+        if before is not None:
+            statement = statement.where(tuple_(Message.created_at, Message.id) < tuple_(before.at, before.id))
+        return list((await self.session.scalars(statement)).all())
 
     async def count_messages(self, conversation_id: uuid.UUID, role: MessageRole) -> int:
         statement = select(func.count()).where(

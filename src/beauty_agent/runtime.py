@@ -53,6 +53,9 @@ class NullQueue:
     async def sync_booking(self, *args: object) -> None:
         return None
 
+    async def process_chat(self, *args: object) -> None:
+        return None
+
 
 @dataclass
 class Runtime:

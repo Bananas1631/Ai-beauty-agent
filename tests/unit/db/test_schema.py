@@ -53,6 +53,7 @@ def test_all_tables_are_registered() -> None:
         "outbound_messages",
         "salon_admins",
         "reminders",
+        "api_keys",
         "drafts",
         "consents",
     }
@@ -113,7 +114,7 @@ def test_channel_is_varchar_with_check() -> None:
 
     assert "channel VARCHAR(32) NOT NULL" in sql
     assert "CONSTRAINT ck_channel_accounts_channel CHECK (channel IN" in sql
-    assert "('telegram', 'telegram_business', 'vk', 'max', 'web')" in sql
+    assert "('telegram', 'telegram_business', 'vk', 'max', 'web', 'api')" in sql
 
 
 def test_booking_overlap_is_excluded_by_database() -> None:

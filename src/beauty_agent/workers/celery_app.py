@@ -106,6 +106,7 @@ celery = Celery(
     "beauty_agent",
     include=[
         "beauty_agent.workers.messages",
+        "beauty_agent.workers.chat",
         "beauty_agent.workers.retention",
         "beauty_agent.workers.reminders",
         "beauty_agent.workers.catalog_sync",

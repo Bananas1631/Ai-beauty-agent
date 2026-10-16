@@ -19,6 +19,11 @@ class CeleryQueue:
 
         await asyncio.to_thread(admin_update_task.apply_async, args=[payload])
 
+    async def process_chat(self, salon_id: uuid.UUID, message_id: uuid.UUID) -> None:
+        from beauty_agent.workers.chat import chat_message_task
+
+        await asyncio.to_thread(chat_message_task.apply_async, args=[str(salon_id), str(message_id)])
+
     async def sync_booking(self, salon_id: uuid.UUID, external_id: str) -> None:
         from beauty_agent.workers.reminders import sync_booking_task
 

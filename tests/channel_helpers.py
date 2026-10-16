@@ -22,6 +22,7 @@ class RecordingQueue:
         self.scheduled: list[tuple[uuid.UUID, str, str]] = []
         self.admin_updates: list[dict[str, Any]] = []
         self.synced: list[tuple[uuid.UUID, str]] = []
+        self.chats: list[tuple[uuid.UUID, uuid.UUID]] = []
 
     async def schedule(self, account_id: uuid.UUID, chat_id: str, token: str, *, delay_s: float) -> None:
         self.scheduled.append((account_id, chat_id, token))
@@ -31,6 +32,9 @@ class RecordingQueue:
 
     async def sync_booking(self, salon_id: uuid.UUID, external_id: str) -> None:
         self.synced.append((salon_id, external_id))
+
+    async def process_chat(self, salon_id: uuid.UUID, message_id: uuid.UUID) -> None:
+        self.chats.append((salon_id, message_id))
 
 
 class RecordingSender:

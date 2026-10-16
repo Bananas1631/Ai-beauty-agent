@@ -62,7 +62,7 @@ from beauty_agent.domain.consent import (
     detect_intent,
     strip_personal_data,
 )
-from beauty_agent.domain.enums import Channel, ConversationStatus, MessageRole, ReplyMode
+from beauty_agent.domain.enums import Channel, ConversationStatus, MessageRole, MessageStatus, ReplyMode
 from beauty_agent.rag.embeddings import EmbeddingsClient, HashingEmbeddings
 from beauty_agent.rag.retriever import HybridRetriever, RagSalonInfo
 
@@ -94,6 +94,8 @@ class IncomingMessage:
     external_message_id: str | None = None  # ID сообщения в канале: защита от повторного вебхука
     client_name: str | None = None
     reply_to: ReplyRoute | None = None  # мессенджеры: ответ уходит через outbox
+    # REST API: сообщение уже сохранено accept() со статусом «в очереди» — ответить на него
+    stored_message_id: uuid.UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +173,38 @@ class ConversationService:
             metrics.llm_cost(str(salon.id), reply.result.cost_rub)
         return reply
 
+    async def accept(self, message: IncomingMessage) -> tuple[uuid.UUID, bool]:
+        """REST API: сохранить сообщение клиента со статусом «в очереди»; ответ посчитает воркер.
+
+        Без согласия телефон и e-mail вырезаются сразу — до записи в БД. Повтор запроса с тем же
+        Idempotency-Key (external_message_id) возвращает уже сохранённое сообщение.
+        """
+        salon = message.salon
+        async with self.session_factory() as session:
+            clients = ClientsRepository(session, salon.id)
+            conversations = ConversationsRepository(session, salon.id)
+            client = await clients.find_or_create(message.channel, message.external_user_id, name=message.client_name)
+            consent = await self.privacy.state(session, salon.id, client.id)
+            text = message.text if allows_personal_data(consent) else strip_personal_data(message.text)
+            conversation = await conversations.open_for(client.id, message.channel)
+            stored = await conversations.add_message(
+                conversation.id,
+                MessageRole.CLIENT,
+                text,
+                external_id=message.external_message_id,
+                status=MessageStatus.QUEUED,
+            )
+            if stored is None and message.external_message_id is not None:
+                existing = await conversations.message_by_external_id(conversation.id, message.external_message_id)
+                if existing is None:  # pragma: no cover — конфликт по external_id без строки невозможен
+                    raise RuntimeError("Сообщение с этим ключом не найдено")
+                await session.commit()
+                return existing.id, False
+            if stored is None:  # pragma: no cover — без external_id конфликта не бывает
+                raise RuntimeError("Сообщение не сохранено")
+            await session.commit()
+            return stored, True
+
     @staticmethod
     def _outbox_key(message: IncomingMessage) -> str | None:
         if message.reply_to is None:
@@ -191,6 +225,7 @@ class ConversationService:
         text: str,
         *,
         question: str = "",
+        question_id: uuid.UUID | None = None,
         tokens_in: int | None = None,
         tokens_out: int | None = None,
         cost_rub: Decimal | None = None,
@@ -217,8 +252,16 @@ class ConversationService:
                 draft_id = existing.id if existing else None
             return None, draft_id
         await conversations.add_message(
-            conversation_id, MessageRole.AGENT, text, tokens_in=tokens_in, tokens_out=tokens_out, cost_rub=cost_rub
+            conversation_id,
+            MessageRole.AGENT,
+            text,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_rub=cost_rub,
+            in_reply_to=question_id,
         )
+        if message.stored_message_id is not None:
+            await conversations.set_message_status(message.stored_message_id, MessageStatus.DONE)
         if delivery_key and message.reply_to:
             await enqueue_outbound(
                 session,
@@ -274,9 +317,19 @@ class ConversationService:
         state = await self.states.load(
             str(salon.id), str(conversation_id), restore=lambda: conversations.restore_state(conversation_id)
         )
-        stored = await conversations.add_message(
-            conversation_id, MessageRole.CLIENT, text, external_id=message.external_message_id
-        )
+        if message.stored_message_id is not None:
+            stored: uuid.UUID | None = message.stored_message_id
+            earlier = await conversations.reply_of(message.stored_message_id)
+            if earlier is not None:  # повтор задачи Celery: ответ уже сохранён
+                return Reply(earlier.content, conversation_id, duplicate=True)
+            await conversations.set_message_status(message.stored_message_id, MessageStatus.PROCESSING)
+            # сообщение уже в БД: если состояние восстановлено оттуда, оно уже в истории
+            if state.turns and state.turns[-1].role == "user" and state.turns[-1].content == text:
+                state.turns.pop()
+        else:
+            stored = await conversations.add_message(
+                conversation_id, MessageRole.CLIENT, text, external_id=message.external_message_id
+            )
         if stored is None:
             delivery_key = self._outbox_key(message)
             draft = await DraftsRepository(session).by_key(salon.id, delivery_key) if delivery_key else None
@@ -305,11 +358,13 @@ class ConversationService:
             # Мессенджер: агент молчит, отвечает администратор из админ-бота. Виджету сайта
             # администратор ответить не может — клиент там хотя бы узнает, что его услышали
             answer = HANDED_OFF_ANSWER if message.reply_to is None else None
+            if message.stored_message_id is not None and answer is not None:
+                await self._answer(session, conversations, conversation_id, message, answer, question_id=stored)
             return Reply(answer, conversation_id, handed_off=True)
 
         config = salon.config
         if await self.budget.exceeded(str(salon.id), config.daily_llm_budget_rub):
-            return await self._budget_exceeded(session, conversations, conversation_id, message, text)
+            return await self._budget_exceeded(session, conversations, conversation_id, message, text, stored)
 
         try:
             router = build_router(
@@ -318,7 +373,7 @@ class ConversationService:
         except ValueError:  # ни одной настроенной модели — отвечает администратор
             logger.error("no_llm_configured", salon_id=str(salon.id))
             delivery_key, draft_id = await self._answer(
-                session, conversations, conversation_id, message, HANDOFF_ANSWER, question=text
+                session, conversations, conversation_id, message, HANDOFF_ANSWER, question=text, question_id=stored
             )
             await hand_off(session, self.notifier, salon.id, conversation_id, "Не настроена ни одна LLM")
             return Reply(HANDOFF_ANSWER, conversation_id, handed_off=True, outbox_key=delivery_key, draft_id=draft_id)
@@ -389,6 +444,7 @@ class ConversationService:
             message,
             answer,
             question=text,
+            question_id=stored,
             tokens_in=result.usage.prompt_tokens,
             tokens_out=result.usage.completion_tokens,
             cost_rub=result.cost_rub,
@@ -419,11 +475,18 @@ class ConversationService:
         conversation_id: uuid.UUID,
         message: IncomingMessage,
         question: str,
+        question_id: uuid.UUID | None = None,
     ) -> Reply:
         salon = message.salon
         logger.warning("llm_budget_exceeded", salon_id=str(salon.id))
         delivery_key, draft_id = await self._answer(
-            session, conversations, conversation_id, message, BUDGET_EXCEEDED_ANSWER, question=question
+            session,
+            conversations,
+            conversation_id,
+            message,
+            BUDGET_EXCEEDED_ANSWER,
+            question=question,
+            question_id=question_id,
         )
         await conversations.set_status(conversation_id, ConversationStatus.HANDED_OFF)
         if await self.budget.first_alert_today(str(salon.id)):

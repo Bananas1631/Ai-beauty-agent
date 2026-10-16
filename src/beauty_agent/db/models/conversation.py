@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from beauty_agent.db.base import Base, SalonOwned, Timestamps, UUIDPrimaryKey, str_enum
-from beauty_agent.domain.enums import Channel, ConversationStatus, MessageRole
+from beauty_agent.domain.enums import Channel, ConversationStatus, MessageRole, MessageStatus
 
 
 class Conversation(UUIDPrimaryKey, SalonOwned, Timestamps, Base):
@@ -57,6 +57,13 @@ class Message(UUIDPrimaryKey, SalonOwned, Timestamps, Base):
     tokens_in: Mapped[int | None]
     tokens_out: Mapped[int | None]
     cost_rub: Mapped[Decimal | None] = mapped_column(Numeric(10, 4))
+    # REST API: сообщение клиента обрабатывается в фоне — статус и ошибка здесь, ответ ссылается на вопрос
+    status: Mapped[MessageStatus | None] = mapped_column(str_enum(MessageStatus, "status"))
+    error: Mapped[str | None] = mapped_column(String(300))
+    in_reply_to: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        index=True,
+    )
 
 
 class ToolCall(UUIDPrimaryKey, SalonOwned, Timestamps, Base):

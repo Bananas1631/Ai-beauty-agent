@@ -11,6 +11,7 @@ class Channel(StrEnum):
     VK = auto()
     MAX = auto()
     WEB = auto()
+    API = auto()  # REST API для сайтов, приложений и партнёрских CRM (api/v1/chat.py)
 
 
 class BookingStatus(StrEnum):
@@ -97,3 +98,12 @@ class ReminderStatus(StrEnum):
     SENT = auto()
     CANCELLED = auto()  # запись отменена или перенесена — вместо него поставлено новое
     SKIPPED = auto()  # отправлять некуда (клиент писал с сайта) или запись уже прошла
+
+
+class MessageStatus(StrEnum):
+    """Обработка сообщения из REST API: статус хранится в строке сообщения, а не в Celery."""
+
+    QUEUED = auto()
+    PROCESSING = auto()
+    DONE = auto()
+    FAILED = auto()

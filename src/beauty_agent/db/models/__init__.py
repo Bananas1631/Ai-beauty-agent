@@ -5,6 +5,7 @@
 
 from beauty_agent.db.base import Base
 from beauty_agent.db.models.admin import Draft, SalonAdmin
+from beauty_agent.db.models.api_key import ApiKey
 from beauty_agent.db.models.booking import Booking, Reminder
 from beauty_agent.db.models.catalog import Master, MasterService, Service
 from beauty_agent.db.models.client import Client, ClientIdentity
@@ -15,6 +16,7 @@ from beauty_agent.db.models.outbox import OutboundMessage
 from beauty_agent.db.models.salon import ChannelAccount, Salon
 
 __all__ = [
+    "ApiKey",
     "Base",
     "Booking",
     "ChannelAccount",

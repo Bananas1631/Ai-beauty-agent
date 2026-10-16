@@ -36,6 +36,7 @@ WEBHOOK_ACCOUNT_LIMIT = Limit("webhook_account", max_hits=600, window_s=60)  # �
 WEBHOOK_FAIL_LIMIT = Limit("webhook_fail_ip", max_hits=20, window_s=600)  # неверный секрет с одного IP
 ADMIN_USER_LIMIT = Limit("admin_user", max_hits=300, window_s=60)  # API инбокса на администратора
 TOKEN_IP_LIMIT = Limit("token_ip", max_hits=20, window_s=60)  # обновление токенов
+API_KEY_LIMIT = Limit("api_key", max_hits=600, window_s=60)  # REST API на ключ интеграции
 
 
 class RateLimiter:

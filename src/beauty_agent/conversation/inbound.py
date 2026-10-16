@@ -43,6 +43,10 @@ class MessageQueue(Protocol):
         """Запись изменилась в YCLIENTS — сверить нашу копию и напоминания (в воркере)."""
         ...
 
+    async def process_chat(self, salon_id: uuid.UUID, message_id: uuid.UUID) -> None:
+        """Сообщение из REST API — ответ агента в воркере (workers/chat.py)."""
+        ...
+
 
 @dataclass
 class InboundGate:
