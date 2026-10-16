@@ -95,39 +95,42 @@ async def widget(websocket: WebSocket, slug: str) -> None:
     limiter = RateLimiter(app.state.redis)
     service: ConversationService = app.state.conversations
 
-    while True:
-        try:
-            data = await websocket.receive_json()
-        except WebSocketDisconnect:
-            return
-        except ValueError:  # не JSON
-            await websocket.send_json(
-                {"type": "error", "code": "bad_request", "text": "Не удалось прочитать сообщение"}
-            )
-            continue
-        text = _text_of(data)
-        if text is None:
-            await websocket.send_json(
-                {"type": "error", "code": "bad_request", "text": f"Сообщение — от 1 до {MAX_INPUT_CHARS} символов"}
-            )
-            continue
-        if not await limiter.hit(SESSION_LIMIT, session_id) or not await limiter.hit(IP_LIMIT, ip):
-            await websocket.send_json(
-                {"type": "error", "code": "rate_limited", "text": "Слишком много сообщений — подождите минуту"}
-            )
-            continue
+    try:
+        while True:
+            try:
+                data = await websocket.receive_json()
+            except WebSocketDisconnect:
+                return
+            except ValueError:  # не JSON
+                await websocket.send_json(
+                    {"type": "error", "code": "bad_request", "text": "Не удалось прочитать сообщение"}
+                )
+                continue
+            text = _text_of(data)
+            if text is None:
+                await websocket.send_json(
+                    {"type": "error", "code": "bad_request", "text": f"Сообщение — от 1 до {MAX_INPUT_CHARS} символов"}
+                )
+                continue
+            if not await limiter.hit(SESSION_LIMIT, session_id) or not await limiter.hit(IP_LIMIT, ip):
+                await websocket.send_json(
+                    {"type": "error", "code": "rate_limited", "text": "Слишком много сообщений — подождите минуту"}
+                )
+                continue
 
-        await websocket.send_json({"type": "typing"})
-        try:
-            reply = await service.handle(IncomingMessage(salon, Channel.WEB, session_id, text))
-        except LockBusyError:
-            await websocket.send_json({"type": "error", "code": "busy", "text": "Ещё отвечаю на прошлое сообщение"})
-            continue
-        except Exception:
-            logger.exception("widget_message_failed", salon_id=str(salon.id))
-            await websocket.send_json(
-                {"type": "error", "code": "internal", "text": "Не получилось ответить. Попробуйте ещё раз чуть позже."}
-            )
-            continue
-        if reply.text:
-            await websocket.send_json({"type": "message", "text": reply.text, "handed_off": reply.handed_off})
+            await websocket.send_json({"type": "typing"})
+            try:
+                reply = await service.handle(IncomingMessage(salon, Channel.WEB, session_id, text))
+            except LockBusyError:
+                await websocket.send_json({"type": "error", "code": "busy", "text": "Ещё отвечаю на прошлое сообщение"})
+                continue
+            except Exception:
+                logger.exception("widget_message_failed", salon_id=str(salon.id))
+                failed = "Не получилось ответить. Попробуйте ещё раз чуть позже."
+                await websocket.send_json({"type": "error", "code": "internal", "text": failed})
+                continue
+            if reply.text:
+                await websocket.send_json({"type": "message", "text": reply.text, "handed_off": reply.handed_off})
+    except WebSocketDisconnect:
+        # Клиент закрыл вкладку, пока агент думал: ответ уже сохранён в диалоге, отправлять некому
+        logger.info("widget_client_left", salon_id=str(salon.id))

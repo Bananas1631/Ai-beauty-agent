@@ -71,6 +71,13 @@ async def enqueue_outbound(
     await session.execute(statement)
 
 
+async def outbox_exists(session: AsyncSession, salon_id: uuid.UUID, dedupe_key: str) -> bool:
+    statement = select(OutboundMessage.id).where(
+        OutboundMessage.salon_id == salon_id, OutboundMessage.dedupe_key == dedupe_key
+    )
+    return await session.scalar(statement) is not None
+
+
 class Outbox:
     def __init__(
         self,

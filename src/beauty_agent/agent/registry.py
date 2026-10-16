@@ -55,6 +55,9 @@ class ToolContext:
     preferred_master_id: str | None = None
     handoff_reason: str | None = None  # заполняет инструмент handoff_to_admin
     facts: list[str] = field(default_factory=list)  # тексты результатов: по ним guardrails сверяют ответ
+    # Вызывается после каждого инструмента: вернуть соединение с БД в пул, чтобы оно не простаивало,
+    # пока агент ждёт ответ модели (docs/performance.md, нагрузочный тест)
+    release: Callable[[], Awaitable[None]] | None = None
 
 
 Handler = Callable[[Any, ToolContext], Awaitable[dict[str, Any]]]
@@ -150,6 +153,9 @@ class ToolRegistry:
         except Exception:
             logger.exception("tool_failed", tool=tool.name)
             error = "Не удалось выполнить действие. Предложи клиенту передать вопрос администратору."
+        finally:
+            if context.release is not None:
+                await context.release()
         outcome = ToolOutcome(
             call_id=call_id,
             name=tool.name,

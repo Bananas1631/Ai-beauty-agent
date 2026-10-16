@@ -17,6 +17,7 @@ from beauty_agent.adapters.channels.max import MaxBotApi, tls_context
 from beauty_agent.adapters.channels.telegram import TelegramBotApi
 from beauty_agent.adapters.channels.vk import VkApi
 from beauty_agent.adapters.crm.factory import ProviderRegistry
+from beauty_agent.adapters.latency import SlowLLM
 from beauty_agent.adapters.llm.base import LLMClient
 from beauty_agent.adapters.llm.models import build_clients, build_embedder
 from beauty_agent.adapters.llm.offline import OfflineLLM
@@ -113,7 +114,12 @@ def create_runtime(
     )
     security = Security(settings.security, env=settings.app.env)
     limiter = RedisTokenBucket(redis, YCLIENTS_RATE_KEY, settings.yclients.requests_per_second)
-    providers = ProviderRegistry(settings.yclients, limiter=limiter)
+    simulated = settings.app.simulated_latency_ms if settings.app.env != "prod" else 0
+    providers = ProviderRegistry(settings.yclients, limiter=limiter, fake_latency_ms=simulated // 5)
+    # Без ключей LLM вне прода отвечает офлайн-модель: демо и проверка работают сразу
+    fallback: LLMClient | None = None
+    if settings.app.env != "prod":
+        fallback = SlowLLM(OfflineLLM(), simulated) if simulated else OfflineLLM()
     llm_clients = build_clients(settings.llm)
     tracer = make_tracer(settings.langfuse)
     telegram = TelegramBotApi(http)
@@ -128,8 +134,7 @@ def create_runtime(
         llm_clients=llm_clients,
         default_models=settings.llm.default_models,
         notifier=notifier,
-        # Без ключей LLM вне прода отвечает офлайн-модель: демо и проверка работают сразу
-        fallback_llm=None if settings.app.env == "prod" else OfflineLLM(),
+        fallback_llm=fallback,
         embedder=build_embedder(settings.llm),
         tracer=tracer,
         privacy=privacy,

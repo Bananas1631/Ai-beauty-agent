@@ -140,6 +140,41 @@ async def test_retried_task_does_not_send_twice(
     assert row.external_id == "msg-1"
 
 
+async def test_crash_between_receive_and_answer_is_answered_on_retry(
+    monkeypatch: pytest.MonkeyPatch,
+    session_factory: async_sessionmaker[AsyncSession],
+    redis: Redis,
+    account: ChannelAccount,
+) -> None:
+    """Приём сообщения коммитится до вызова агента: если задача упала до ответа, повтор отвечает."""
+    from beauty_agent.adapters.channels.telegram import parse_update
+    from beauty_agent.db.repositories.conversations import ConversationsRepository
+
+    original = ConversationsRepository.add_tool_calls
+    crashes = [RuntimeError("воркер упал после ответа модели")]
+
+    async def crash_once(self: ConversationsRepository, *args: object, **kwargs: object) -> None:
+        if crashes:
+            raise crashes.pop()
+        await original(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(ConversationsRepository, "add_tool_calls", crash_once)
+    llm = ScriptedLLM([reply("Первая попытка"), reply("Ответ после повтора")])
+    sender = RecordingSender()
+    gate, processor, queue, _ = pipeline(session_factory, redis, llm, sender)
+    update = parse_update(telegram_update(1, "Привет"))
+    assert update is not None
+    await gate.accept(account.id, update)
+
+    with pytest.raises(RuntimeError):
+        await processor.process(*queue.scheduled[0])
+    await processor.process(*queue.scheduled[0])  # Celery повторил задачу
+
+    assert [delivery.text.splitlines()[0] for delivery in sender.sent] == ["Ответ после повтора"]
+    retried_history = [m.content for m in llm.calls[1][0] if m.role == "user"]
+    assert retried_history.count("Привет") == 1  # сообщение клиента в истории модели один раз
+
+
 async def test_voice_gets_polite_answer_and_admin_alert(
     session_factory: async_sessionmaker[AsyncSession], redis: Redis, account: ChannelAccount
 ) -> None:

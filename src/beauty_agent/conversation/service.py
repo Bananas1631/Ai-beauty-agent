@@ -11,6 +11,12 @@
 Согласие (152-ФЗ, domain/consent.py): без него телефон и e-mail вырезаются из сообщения до
 сохранения и до LLM, запись недоступна, к первому ответу добавляется текст со ссылкой на политику.
 Пока диалог у администратора, агент молчит: сообщения клиента пересылаются в админ-бот.
+
+Транзакции короткие (нагрузочный тест, docs/performance.md): приём сообщения коммитится до вызова
+агента, инструменты берут соединение только на время своего запроса, ответ и строка outbox
+сохраняются отдельной транзакцией. Иначе соединение пула простаивало бы «idle in transaction»,
+пока агент секундами ждёт модель, и при 10 одновременных диалогах вставали бы все запросы сервиса.
+Если задача упала между приёмом и ответом, повтор видит сохранённое сообщение без ответа и отвечает.
 """
 
 import uuid
@@ -36,7 +42,7 @@ from beauty_agent.agent.tools import CONSENT_REQUIRED, default_registry
 from beauty_agent.catalog.lookup import DbCatalog
 from beauty_agent.conversation.handoff import hand_off
 from beauty_agent.conversation.notifications import AdminEvent, AdminEventKind, Notifier
-from beauty_agent.conversation.outbox import enqueue_outbound, outbox_key
+from beauty_agent.conversation.outbox import enqueue_outbound, outbox_exists, outbox_key
 from beauty_agent.conversation.privacy import PrivacyService
 from beauty_agent.core import metrics
 from beauty_agent.core.redis import RedisLock, key
@@ -272,16 +278,24 @@ class ConversationService:
             conversation_id, MessageRole.CLIENT, text, external_id=message.external_message_id
         )
         if stored is None:
-            # Повтор вебхука или задачи: ответ уже сохранён — воркер доставит его, если не успел
             delivery_key = self._outbox_key(message)
             draft = await DraftsRepository(session).by_key(salon.id, delivery_key) if delivery_key else None
-            return Reply(
-                None,
-                conversation_id,
-                duplicate=True,
-                outbox_key=None if draft else delivery_key,
-                draft_id=draft.id if draft else None,
+            answered = draft is not None or (
+                delivery_key is not None and await outbox_exists(session, salon.id, delivery_key)
             )
+            if answered or delivery_key is None:
+                # Повтор вебхука или задачи: ответ уже сохранён — воркер доставит его, если не успел
+                return Reply(
+                    None,
+                    conversation_id,
+                    duplicate=True,
+                    outbox_key=None if draft else delivery_key,
+                    draft_id=draft.id if draft else None,
+                )
+            # Прошлая попытка сохранила сообщение, но упала до ответа — отвечаем сейчас.
+            # Если состояние восстановлено из БД, сообщение уже в истории — второй раз его не добавляем.
+            if state.turns and state.turns[-1].role == "user" and state.turns[-1].content == text:
+                state.turns.pop()
         if message.reply_to is not None:
             await conversations.set_route(conversation_id, message.reply_to.to_json())
         if conversation.status is ConversationStatus.HANDED_OFF:
@@ -309,39 +323,58 @@ class ConversationService:
             await hand_off(session, self.notifier, salon.id, conversation_id, "Не настроена ни одна LLM")
             return Reply(HANDOFF_ANSWER, conversation_id, handed_off=True, outbox_key=delivery_key, draft_id=draft_id)
 
-        booking = BookingService(
-            salon_id=str(salon.id),
-            timezone=salon.timezone,
-            provider=self.providers.for_salon(salon),
-            redis=self.redis,
-            ledger=SqlBookingLedger(
-                session, salon.id, timezone=salon.timezone, reminders=config.reminders_enabled, clock=self.clock
-            ),
-        )
-        ctx = ToolContext(
-            salon_id=str(salon.id),
-            salon_name=salon.name,
-            conversation_id=str(conversation_id),
-            now=self.clock().astimezone(ZoneInfo(salon.timezone)),
-            booking=booking,
-            catalog=DbCatalog(session, salon.id),
-            salon_info=RagSalonInfo(HybridRetriever(session, salon.id, self.embedder)),
-            client_id=client.id,
-        )
-        agent = Agent(
-            router,
-            default_registry(personal_data_allowed=allowed),
-            prompt_version=config.prompt_version,
-            tracer=self.tracer,
-        )
-        result = await agent.run(text, ctx, state, profile=await clients.profile(client))
+        profile = await clients.profile(client)
+        first_reply = await conversations.count_messages(conversation_id, MessageRole.AGENT) == 0
+        # Фаза приёма закончена: соединение возвращается в пул на время работы агента
+        await session.commit()
+
+        async with self.session_factory() as tool_session:
+
+            async def release() -> None:
+                """После каждого инструмента: закончить его транзакцию и отдать соединение в пул."""
+                try:
+                    await tool_session.commit()
+                except Exception:
+                    await tool_session.rollback()
+
+            booking = BookingService(
+                salon_id=str(salon.id),
+                timezone=salon.timezone,
+                provider=self.providers.for_salon(salon),
+                redis=self.redis,
+                ledger=SqlBookingLedger(
+                    tool_session,
+                    salon.id,
+                    timezone=salon.timezone,
+                    reminders=config.reminders_enabled,
+                    clock=self.clock,
+                ),
+            )
+            ctx = ToolContext(
+                salon_id=str(salon.id),
+                salon_name=salon.name,
+                conversation_id=str(conversation_id),
+                now=self.clock().astimezone(ZoneInfo(salon.timezone)),
+                booking=booking,
+                catalog=DbCatalog(tool_session, salon.id),
+                salon_info=RagSalonInfo(HybridRetriever(tool_session, salon.id, self.embedder)),
+                client_id=client.id,
+                release=release,
+            )
+            agent = Agent(
+                router,
+                default_registry(personal_data_allowed=allowed),
+                prompt_version=config.prompt_version,
+                tracer=self.tracer,
+            )
+            result = await agent.run(text, ctx, state, profile=profile)
         answer = result.text
         # Просьба о согласии — к первому ответу и когда агент пытался записать; не при передаче администратору
         if (
             not allowed
             and not result.handed_off
             and (
-                await conversations.count_messages(conversation_id, MessageRole.AGENT) == 0
+                first_reply
                 or any(
                     outcome.result and outcome.result.get("status") == CONSENT_REQUIRED for outcome in result.tool_calls
                 )

@@ -60,6 +60,10 @@ services:
       # метрики дочерних процессов — в tmpfs, сводку отдаёт главный процесс на 9100 (только внутри сети)
       PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
       METRICS_PORT: "9100"
+      # процесс воркера обрабатывает одну задачу за раз: большой пул ему не нужен.
+      # Соединений всего: api 15 + 4 процесса × 5 + beat 15 = 50 из 100 у PostgreSQL
+      POSTGRES_POOL_SIZE: "3"
+      POSTGRES_MAX_OVERFLOW: "2"
     command: ["celery", "-A", "beauty_agent.workers.celery_app", "worker", "-Q", "messages,periodic",
               "--concurrency", "4", "--loglevel", "INFO"]
     healthcheck:

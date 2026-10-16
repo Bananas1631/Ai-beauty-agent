@@ -34,6 +34,8 @@ class AppSettings(EnvSection):
     ready_timeout_s: float = 2.0
     # адрес сервиса снаружи: с него открывается страница салона, и его Origin разрешён веб-чату
     public_url: str = "http://localhost:8000"
+    # Только вне прода: средняя задержка фейковых LLM и CRM для нагрузочного теста (adapters/latency.py)
+    simulated_latency_ms: int = 0
 
     @property
     def docs_enabled(self) -> bool:
@@ -49,6 +51,11 @@ class PostgresSettings(EnvSection):
     user: str = "beauty"
     password: SecretStr = SecretStr("beauty")
     db: str = "beauty"
+    # Пул на процесс: соединений всего = процессы × (pool_size + max_overflow) — держать ниже
+    # max_connections PostgreSQL (100) с запасом на миграции и psql (docs/performance.md)
+    pool_size: int = 10
+    max_overflow: int = 5
+    pool_timeout_s: float = 10.0  # нет свободного соединения 10 с — ошибка, а не бесконечное ожидание
 
     @property
     def url(self) -> URL:

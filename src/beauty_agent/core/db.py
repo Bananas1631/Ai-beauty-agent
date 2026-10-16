@@ -19,8 +19,9 @@ def make_engine(settings: PostgresSettings, *, echo: bool = False) -> AsyncEngin
     return create_async_engine(
         settings.url,
         echo=echo,  # True — печатать каждый SQL-запрос, только для отладки
-        pool_size=5,  # постоянных соединений в пуле
-        max_overflow=5,  # временных сверх них при пиковой нагрузке
+        pool_size=settings.pool_size,  # постоянных соединений в пуле
+        max_overflow=settings.max_overflow,  # временных сверх них при пиковой нагрузке
+        pool_timeout=settings.pool_timeout_s,
         pool_pre_ping=True,  # перед выдачей проверить, что соединение живо
     )
 
