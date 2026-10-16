@@ -4,12 +4,12 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, String, UniqueConstraint, column, false, func
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Numeric, String, UniqueConstraint, column, false, func
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from beauty_agent.db.base import Base, SalonOwned, Timestamps, UUIDPrimaryKey, str_enum
-from beauty_agent.domain.enums import BookingStatus
+from beauty_agent.domain.enums import BookingStatus, ReminderStatus
 
 
 class Booking(UUIDPrimaryKey, SalonOwned, Timestamps, Base):
@@ -36,6 +36,11 @@ class Booking(UUIDPrimaryKey, SalonOwned, Timestamps, Base):
         ForeignKey("clients.id", ondelete="SET NULL"),
         index=True,
     )
+    # диалог, из которого записались: туда уходят напоминания; удалён диалог — напоминаний нет
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL"),
+        index=True,
+    )
     master_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("masters.id", ondelete="RESTRICT"))
     service_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("services.id", ondelete="RESTRICT"))
     starts_at: Mapped[datetime]
@@ -46,3 +51,24 @@ class Booking(UUIDPrimaryKey, SalonOwned, Timestamps, Base):
     # повтор запроса с тем же ключом не создаёт вторую запись
     idempotency_key: Mapped[str] = mapped_column(String(64))
     created_by_ai: Mapped[bool] = mapped_column(server_default=false())  # для счёта салону
+
+
+class Reminder(UUIDPrimaryKey, SalonOwned, Timestamps, Base):
+    """Напоминание о записи. Отправляет периодическая задача, а не задача Celery с ETA:
+    RabbitMQ 4 отключает потребителя, который держит неподтверждённое сообщение дольше 30 минут."""
+
+    __tablename__ = "reminders"
+    __table_args__ = (
+        UniqueConstraint("booking_id", "kind"),
+        # выборка «пора отправлять» по частичному индексу только ожидающих
+        Index(None, "due_at", postgresql_where=column("status") == ReminderStatus.PENDING.value),
+    )
+
+    booking_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("bookings.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(8))  # 24h | 2h
+    due_at: Mapped[datetime]
+    status: Mapped[ReminderStatus] = mapped_column(
+        str_enum(ReminderStatus, "status"),
+        server_default=ReminderStatus.PENDING.value,
+    )
+    sent_at: Mapped[datetime | None]

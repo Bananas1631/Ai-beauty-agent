@@ -30,13 +30,15 @@ from beauty_agent.agent.tools import CardSalonInfo, ProviderCatalog, default_reg
 from beauty_agent.core.config import Settings, get_settings
 from beauty_agent.core.logging import configure_logging
 from beauty_agent.core.redis import make_redis
+from beauty_agent.domain.booking_engine.memory import MemoryLedger
 from beauty_agent.domain.booking_engine.service import BookingEntry, BookingService
 
 EXIT_WORDS = {"выход", "exit", "quit", "q"}
 
 
-class PrintLedger:
+class PrintLedger(MemoryLedger):
     async def record(self, entry: BookingEntry) -> None:
+        await super().record(entry)
         print(f"  [CRM] запись {entry.status.value}: {entry.slot.starts_at:%d.%m %H:%M}, мастер {entry.slot.master_id}")
 
 

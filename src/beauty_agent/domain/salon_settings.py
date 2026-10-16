@@ -29,13 +29,16 @@ class SalonSettings(BaseModel):
 
     crm_kind: CrmKind = CrmKind.YCLIENTS
     llm_models: list[str] | None = None  # порядок моделей; None — LLM_DEFAULT_MODELS
-    prompt_version: str = Field("v1", pattern=r"^v\d{1,3}$")
+    prompt_version: str = Field("v2", pattern=r"^v\d{1,3}$")
     daily_llm_budget_rub: Decimal = Field(Decimal(300), ge=0, le=100_000)
     # Сайты салона, на которых разрешён виджет чата (проверка Origin у WebSocket)
     allowed_origins: list[str] = Field(default_factory=list, max_length=10)
     # Пилот начинается в теневом режиме: агент пишет черновики, администратор отправляет их кнопкой
     reply_mode: ReplyMode = ReplyMode.AUTOPILOT
     retention_days: int = Field(365, ge=30, le=1825)  # переписка старше удаляется ночной задачей
+    # напоминания за 24 и 2 часа; выключены, если салон уже шлёт SMS-напоминания из YCLIENTS
+    reminders_enabled: bool = False
+    average_check_rub: Decimal | None = Field(None, ge=0, le=1_000_000)  # для отчёта в рублях
     privacy: PrivacyInfo | None = None
 
     @field_validator("allowed_origins")

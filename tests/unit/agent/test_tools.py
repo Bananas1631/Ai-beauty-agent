@@ -38,7 +38,7 @@ async def run(ctx: ToolContext, name: str, **arguments: object) -> dict[str, obj
 # ---------------------------------------------------------------- схемы и реестр
 
 
-def test_six_tools_with_strict_schemas() -> None:
+def test_tools_with_strict_schemas() -> None:
     specs = registry.specs()
 
     assert [spec.name for spec in specs] == [
@@ -47,6 +47,9 @@ def test_six_tools_with_strict_schemas() -> None:
         "find_free_time",
         "book",
         "salon_info",
+        "my_bookings",
+        "cancel_booking",
+        "reschedule_booking",
         "handoff_to_admin",
     ]
     for spec in specs:

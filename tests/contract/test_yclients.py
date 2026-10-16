@@ -284,7 +284,7 @@ async def test_timeout_on_booking_finds_created_record(api: respx.MockRouter) ->
     yclients = YclientsProvider(
         COMPANY, make_settings(user_token="user-test"), http=http_client(), limiter=NoLimit(), retry_wait=wait_none()
     )
-    api.post(f"book_record/{COMPANY}").mock(side_effect=httpx.ReadTimeout("slow"))
+    api.post(f"records/{COMPANY}").mock(side_effect=httpx.ReadTimeout("slow"))
     records = api.get(f"records/{COMPANY}").respond(200, json=fixture("records.json"))
 
     result = await yclients.create_booking(BookingRequest(SLOT, CLIENT, "dialog-1-option-1"))
@@ -325,3 +325,107 @@ async def test_circuit_opens_after_failures(api: respx.MockRouter) -> None:
         await yclients.list_services()
     assert route.call_count == 5  # разомкнутая цепь не отправляет запросы
     await yclients.aclose()
+
+
+# ---------------------------------------------------------------- записи от имени салона (user-токен)
+
+
+@pytest.fixture
+async def salon_app() -> AsyncIterator[YclientsProvider]:
+    yclients = YclientsProvider(
+        COMPANY, make_settings(user_token="user-test"), http=http_client(), limiter=NoLimit(), retry_wait=wait_none()
+    )
+    try:
+        yield yclients
+    finally:
+        await yclients.aclose()
+
+
+async def test_booking_on_behalf_of_salon(salon_app: YclientsProvider, api: respx.MockRouter) -> None:
+    route = api.post(f"records/{COMPANY}").respond(201, json=fixture("records_create.json"))
+
+    result = await salon_app.create_booking(BookingRequest(SLOT, CLIENT, "dialog-1-option-1"))
+
+    assert result.external_id == "900003"
+    body = json.loads(route.calls.last.request.content)
+    assert body["staff_id"] == 11
+    assert body["services"] == [{"id": 101}]
+    assert body["client"] == {"phone": "79000000001", "name": "Анна", "email": ""}
+    assert body["seance_length"] == 90 * 60
+    assert body["save_if_busy"] is False  # поверх чужой записи не записываем
+    assert body["api_id"] == "dialog-1-option-1"
+    assert "User user-test" in route.calls.last.request.headers["Authorization"]
+
+
+async def test_get_booking(salon_app: YclientsProvider, api: respx.MockRouter) -> None:
+    api.get(f"record/{COMPANY}/900001").respond(200, json=fixture("record.json"))
+    api.get(f"record/{COMPANY}/900002").respond(200, json=fixture("record_deleted.json"))
+    api.get(f"record/{COMPANY}/900009").respond(404, json=fixture("error_404.json"))
+
+    active = await salon_app.get_booking("900001")
+    deleted = await salon_app.get_booking("900002")
+    missing = await salon_app.get_booking("900009")
+
+    assert active is not None
+    assert active.active
+    assert active.slot == Slot("11", "101", datetime(2026, 10, 20, 10, 0, tzinfo=MSK), 60)
+    assert deleted is not None
+    assert not deleted.active
+    assert missing is None
+
+
+async def test_reschedule_keeps_client_and_does_not_retry(salon_app: YclientsProvider, api: respx.MockRouter) -> None:
+    api.get(f"record/{COMPANY}/900001").respond(200, json=fixture("record.json"))
+    put = api.put(f"record/{COMPANY}/900001").respond(200, json=fixture("record.json"))
+    new_slot = Slot("12", "101", datetime(2026, 10, 21, 15, 0, tzinfo=MSK), 60)
+
+    result = await salon_app.reschedule_booking("900001", new_slot)
+
+    assert result.slot == new_slot
+    body = json.loads(put.calls.last.request.content)
+    assert (body["staff_id"], body["datetime"]) == (12, "2026-10-21T15:00:00+03:00")
+    assert body["client"] == {"phone": "79000000001", "name": "Анна"}  # клиент записи не меняется
+    assert put.call_count == 1
+
+
+async def test_reschedule_to_busy_time(salon_app: YclientsProvider, api: respx.MockRouter) -> None:
+    api.get(f"record/{COMPANY}/900001").respond(200, json=fixture("record.json"))
+    api.put(f"record/{COMPANY}/900001").respond(422, json=fixture("book_check_busy.json"))
+
+    with pytest.raises(SlotTakenError):
+        await salon_app.reschedule_booking("900001", SLOT)
+
+
+async def test_cancel_is_idempotent(salon_app: YclientsProvider, api: respx.MockRouter) -> None:
+    first = api.delete(f"record/{COMPANY}/900001").respond(204)
+    gone = api.delete(f"record/{COMPANY}/900002").respond(404, json=fixture("error_404.json"))
+
+    await salon_app.cancel_booking("900001")
+    await salon_app.cancel_booking("900002")  # уже удалена — не ошибка
+
+    assert first.call_count == 1
+    assert gone.call_count == 1
+
+
+async def test_cancel_timeout_checks_result(salon_app: YclientsProvider, api: respx.MockRouter) -> None:
+    api.delete(f"record/{COMPANY}/900002").mock(side_effect=httpx.ReadTimeout("slow"))
+    api.get(f"record/{COMPANY}/900002").respond(200, json=fixture("record_deleted.json"))
+    api.delete(f"record/{COMPANY}/900001").mock(side_effect=httpx.ReadTimeout("slow"))
+    api.get(f"record/{COMPANY}/900001").respond(200, json=fixture("record.json"))
+
+    await salon_app.cancel_booking("900002")  # запрос дошёл: запись удалена
+    with pytest.raises(YclientsTimeoutError):
+        await salon_app.cancel_booking("900001")  # не дошёл: запись на месте — сообщаем об ошибке
+
+
+async def test_record_methods_need_user_token(provider: YclientsProvider) -> None:
+    with pytest.raises(ProviderAuthError):
+        await provider.get_booking("900001")
+    with pytest.raises(ProviderAuthError):
+        await provider.cancel_booking("900001")
+
+
+@pytest.mark.parametrize("value", ["../900001", "900001?x=1", "１２３"])
+async def test_record_id_is_validated(salon_app: YclientsProvider, value: str) -> None:
+    with pytest.raises(DomainValidationError):
+        await salon_app.cancel_booking(value)

@@ -110,3 +110,12 @@ class BookingResult:
     external_id: str
     slot: Slot
     record_hash: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CrmBooking:
+    """Запись в CRM по её ID: администратор мог перенести или отменить её прямо в YCLIENTS."""
+
+    external_id: str
+    slot: Slot
+    active: bool = True  # False — запись удалена или отменена в CRM

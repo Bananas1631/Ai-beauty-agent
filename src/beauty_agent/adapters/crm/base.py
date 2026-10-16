@@ -8,7 +8,15 @@
 from datetime import date
 from typing import Protocol
 
-from beauty_agent.domain.entities import BookingRequest, BookingResult, MasterInfo, SalonInfo, ServiceInfo, Slot
+from beauty_agent.domain.entities import (
+    BookingRequest,
+    BookingResult,
+    CrmBooking,
+    MasterInfo,
+    SalonInfo,
+    ServiceInfo,
+    Slot,
+)
 
 
 class BookingProvider(Protocol):
@@ -40,4 +48,16 @@ class BookingProvider(Protocol):
 
     async def find_booking(self, slot: Slot, phone: str) -> BookingResult | None:
         """Ищет уже созданную запись клиента на это окно — проверка после таймаута создания."""
+        ...
+
+    async def get_booking(self, external_id: str) -> CrmBooking | None:
+        """Запись по ID без кэша. None — записи нет (удалена в CRM)."""
+        ...
+
+    async def reschedule_booking(self, external_id: str, slot: Slot) -> BookingResult:
+        """Переносит запись на новое окно. Занято — SlotTakenError, запись остаётся на старом времени."""
+        ...
+
+    async def cancel_booking(self, external_id: str) -> None:
+        """Отменяет запись. Повторная отмена уже отменённой — не ошибка."""
         ...

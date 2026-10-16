@@ -1,0 +1,15 @@
+{
+  "success": true,
+  "data": {
+    "id": 900002,
+    "company_id": 555001,
+    "staff_id": 11,
+    "services": [{"id": 101, "title": "Маникюр без покрытия", "cost": 1500}],
+    "client": {"id": 7002, "name": "Вера", "phone": "+79000000002"},
+    "datetime": "2026-10-20T13:30:00+03:00",
+    "seance_length": 3600,
+    "attendance": 0,
+    "deleted": true
+  },
+  "meta": []
+}

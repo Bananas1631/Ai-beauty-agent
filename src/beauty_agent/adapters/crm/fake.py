@@ -14,7 +14,15 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from beauty_agent.domain.booking_engine.slots import Interval, free_starts
-from beauty_agent.domain.entities import BookingRequest, BookingResult, MasterInfo, SalonInfo, ServiceInfo, Slot
+from beauty_agent.domain.entities import (
+    BookingRequest,
+    BookingResult,
+    CrmBooking,
+    MasterInfo,
+    SalonInfo,
+    ServiceInfo,
+    Slot,
+)
 from beauty_agent.domain.errors import DomainError, NotFoundError, ProviderUnavailableError, SlotTakenError
 
 Clock = Callable[[], datetime]
@@ -95,6 +103,9 @@ class FakeCRM:
         self.lead_time = lead_time
         self.busy_per_day = busy_per_day
         self.bookings: dict[str, tuple[BookingRequest, BookingResult]] = {}
+        # изменения «администратором» или через API: перенос и отмена по ID записи
+        self.moved: dict[str, Slot] = {}
+        self.cancelled: set[str] = set()
         self.blocked: list[tuple[str, Interval]] = []  # время, занятое «другими клиентами» в тестах
         self.calls: list[str] = []
         self._failures: list[DomainError] = []
@@ -165,9 +176,46 @@ class FakeCRM:
     async def find_booking(self, slot: Slot, phone: str) -> BookingResult | None:
         self._enter("find_booking")
         for request, result in self.bookings.values():
-            if request.slot == slot and request.client.phone == phone:
+            if self._current(result) == slot and request.client.phone == phone:
                 return result
         return None
+
+    async def get_booking(self, external_id: str) -> CrmBooking | None:
+        self._enter("get_booking")
+        result = self._result(external_id)
+        if result is None:
+            return None
+        current = self._current(result)
+        return CrmBooking(external_id, current or result.slot, active=current is not None)
+
+    async def reschedule_booking(self, external_id: str, slot: Slot) -> BookingResult:
+        self._enter("reschedule_booking")
+        result = self._result(external_id)
+        if result is None or external_id in self.cancelled:
+            raise NotFoundError("Запись не найдена")
+        if self._current(result) != slot:
+            self._ensure_free(slot, ignore=external_id)
+        self.moved[external_id] = slot
+        return BookingResult(external_id, slot)
+
+    async def cancel_booking(self, external_id: str) -> None:
+        self._enter("cancel_booking")
+        if self._result(external_id) is not None:
+            self.cancelled.add(external_id)
+
+    # ------------------------------------------------------------- записи
+
+    def _result(self, external_id: str) -> BookingResult | None:
+        for _, result in self.bookings.values():
+            if result.external_id == external_id:
+                return result
+        return None
+
+    def _current(self, result: BookingResult) -> Slot | None:
+        """Текущее окно записи с учётом переноса; None — запись отменена."""
+        if result.external_id in self.cancelled:
+            return None
+        return self.moved.get(result.external_id, result.slot)
 
     # ------------------------------------------------------------- расчёт
 
@@ -180,7 +228,7 @@ class FakeCRM:
     def _local(self, day: date, moment: time) -> datetime:
         return datetime.combine(day, moment, tzinfo=self.tz)
 
-    def _busy(self, master_id: str, schedule: _Schedule, day: date) -> list[Interval]:
+    def _busy(self, master_id: str, schedule: _Schedule, day: date, ignore: str | None = None) -> list[Interval]:
         """Перерыв, «чужие» записи (детерминированные по дате) и записи, созданные через фейк."""
         break_start = self._local(day, schedule.break_start)
         busy = [Interval(break_start, break_start + timedelta(minutes=schedule.break_minutes))]
@@ -190,32 +238,33 @@ class FakeCRM:
             hour = schedule.start.hour + digest[index] % max(work_hours - 1, 1)
             start = self._local(day, time(hour, 30 * (digest[index + 8] % 2)))
             busy.append(Interval(start, start + timedelta(minutes=60 + 30 * (digest[index + 16] % 3))))
-        busy.extend(
-            Interval(request.slot.starts_at, request.slot.ends_at)
-            for request, _ in self.bookings.values()
-            if request.slot.master_id == master_id
-        )
+        for _, result in self.bookings.values():
+            current = self._current(result)
+            if current is not None and current.master_id == master_id and result.external_id != ignore:
+                busy.append(Interval(current.starts_at, current.ends_at))
         busy.extend(interval for blocked_master, interval in self.blocked if blocked_master == master_id)
         return busy
 
-    def _day_slots(self, master_id: str, schedule: _Schedule, service: ServiceInfo, day: date) -> list[Slot]:
+    def _day_slots(
+        self, master_id: str, schedule: _Schedule, service: ServiceInfo, day: date, ignore: str | None = None
+    ) -> list[Slot]:
         if day.weekday() not in schedule.weekdays:
             return []
         shift = Interval(self._local(day, schedule.start), self._local(day, schedule.end))
         starts = free_starts(
             [shift],
-            self._busy(master_id, schedule, day),
+            self._busy(master_id, schedule, day, ignore),
             timedelta(minutes=service.duration_min),
             not_before=self.clock() + self.lead_time,
         )
         return [Slot(master_id, service.external_id, start, service.duration_min) for start in starts]
 
-    def _ensure_free(self, slot: Slot) -> None:
+    def _ensure_free(self, slot: Slot, ignore: str | None = None) -> None:
         service = self._service(slot.service_id)
         entry = self._masters.get(slot.master_id)
         if entry is None or slot.service_id not in entry[0].service_ids:
             raise NotFoundError("Мастер не делает эту услугу")
         day = slot.starts_at.astimezone(self.tz).date()
-        free = self._day_slots(slot.master_id, entry[1], service, day)
+        free = self._day_slots(slot.master_id, entry[1], service, day, ignore)
         if all(candidate.starts_at != slot.starts_at for candidate in free):
             raise SlotTakenError

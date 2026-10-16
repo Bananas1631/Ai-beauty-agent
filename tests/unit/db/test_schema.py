@@ -52,6 +52,7 @@ def test_all_tables_are_registered() -> None:
         "knowledge_chunks",
         "outbound_messages",
         "salon_admins",
+        "reminders",
         "drafts",
         "consents",
     }

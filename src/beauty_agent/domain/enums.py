@@ -90,3 +90,10 @@ class DraftStatus(StrEnum):
 class AdminRole(StrEnum):
     OWNER = auto()
     ADMIN = auto()
+
+
+class ReminderStatus(StrEnum):
+    PENDING = auto()
+    SENT = auto()
+    CANCELLED = auto()  # запись отменена или перенесена — вместо него поставлено новое
+    SKIPPED = auto()  # отправлять некуда (клиент писал с сайта) или запись уже прошла

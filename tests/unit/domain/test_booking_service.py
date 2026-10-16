@@ -7,6 +7,7 @@ import pytest
 from fakeredis import FakeAsyncRedis
 
 from beauty_agent.adapters.crm.fake import FakeCRM
+from beauty_agent.domain.booking_engine.memory import MemoryLedger
 from beauty_agent.domain.booking_engine.offers import PartOfDay
 from beauty_agent.domain.booking_engine.service import BookingEntry, BookingService, Outcome
 from beauty_agent.domain.entities import ClientContact
@@ -19,14 +20,6 @@ DAY = date(2026, 10, 20)
 WEEK = DAY + timedelta(days=6)
 CLIENT = ClientContact("Анна", "+79000000001")
 DIALOG = "dialog-1"
-
-
-class MemoryLedger:
-    def __init__(self) -> None:
-        self.entries: list[BookingEntry] = []
-
-    async def record(self, entry: BookingEntry) -> None:
-        self.entries.append(entry)
 
 
 @pytest.fixture
@@ -173,7 +166,7 @@ async def test_unavailable_crm_leaves_booking_for_admin(
 
 
 async def test_ledger_failure_does_not_allow_second_booking(engine: BookingService, crm: FakeCRM) -> None:
-    class BrokenLedger:
+    class BrokenLedger(MemoryLedger):
         async def record(self, entry: BookingEntry) -> None:
             raise RuntimeError("БД недоступна")
 

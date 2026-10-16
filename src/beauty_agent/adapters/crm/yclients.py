@@ -1,4 +1,8 @@
-"""Адаптер YCLIENTS по интерфейсу BookingProvider на публичных методах онлайн-записи.
+"""Адаптер YCLIENTS по интерфейсу BookingProvider: онлайн-запись и записи от имени салона.
+
+С токеном сотрудника салона (user-токен) запись создаётся от имени салона через приложение
+(POST records) — без SMS-кода клиенту; так же читаются, переносятся и отменяются записи.
+Без него — публичная онлайн-запись (book_record), а перенос и отмена уходят администратору.
 
 Все запросы идут через одну функцию _send:
 ограничитель частоты → circuit breaker → HTTP → разбор конверта {success, data, meta} → доменные ошибки.
@@ -27,7 +31,15 @@ from tenacity.wait import WaitBaseT
 
 from beauty_agent.core.config import YclientsSettings
 from beauty_agent.core.resilience import CircuitBreaker, CircuitOpenError, RateLimiter, TokenBucket
-from beauty_agent.domain.entities import BookingRequest, BookingResult, MasterInfo, SalonInfo, ServiceInfo, Slot
+from beauty_agent.domain.entities import (
+    BookingRequest,
+    BookingResult,
+    CrmBooking,
+    MasterInfo,
+    SalonInfo,
+    ServiceInfo,
+    Slot,
+)
 from beauty_agent.domain.errors import (
     ConfirmationRequiredError,
     DomainValidationError,
@@ -60,6 +72,8 @@ def unwrap(response: httpx.Response) -> Any:
 
     Текст ошибки YCLIENTS пишется в лог, но не уходит клиенту: там бывают внутренние подробности.
     """
+    if response.status_code == 204:  # удаление записи: успешный ответ без тела
+        return None
     try:
         body = response.json()
     except ValueError:
@@ -208,6 +222,25 @@ def parse_record(data: list[dict[str, Any]], slot: Slot) -> BookingResult:
     )
 
 
+def parse_app_record(data: dict[str, Any] | list[dict[str, Any]], slot: Slot) -> BookingResult:
+    """Ответ POST records: запись, созданная от имени салона. [сверить: объект или список]"""
+    item = data[0] if isinstance(data, list) else data
+    return BookingResult(external_id=str(item["id"]), slot=slot, record_hash=_text(item.get("record_hash")))
+
+
+def parse_crm_record(data: dict[str, Any], tz: ZoneInfo) -> CrmBooking:
+    """Ответ GET record/{company}/{id}: мастер, услуга, время; deleted — запись отменена."""
+    starts_at = datetime.fromisoformat(data["datetime"])
+    if starts_at.tzinfo is None:
+        starts_at = starts_at.replace(tzinfo=tz)
+    service = data["services"][0]
+    return CrmBooking(
+        external_id=str(data["id"]),
+        slot=Slot(str(data["staff_id"]), str(service["id"]), starts_at, _minutes(data.get("seance_length"))),
+        active=not data.get("deleted", False),
+    )
+
+
 def find_record(records: list[dict[str, Any]], slot: Slot, phone: str) -> BookingResult | None:
     wanted = _digits(phone)
     for record in records:
@@ -230,6 +263,20 @@ def numeric_id(value: str, what: str) -> int:
     if not value.isascii() or not value.isdigit() or len(value) > 18:
         raise DomainValidationError(f"Некорректный ID: {what}")
     return int(value)
+
+
+def _record_body(slot: Slot, client: dict[str, Any], comment: str) -> dict[str, Any]:
+    """Тело записи от имени салона (POST records, PUT record). save_if_busy=false — не записывать поверх."""
+    return {
+        "staff_id": numeric_id(slot.master_id, "мастер"),
+        "services": [{"id": numeric_id(slot.service_id, "услуга")}],
+        "client": client,
+        "datetime": slot.starts_at.isoformat(),
+        "seance_length": slot.duration_min * 60,
+        "save_if_busy": False,
+        "send_sms": True,
+        "comment": comment,
+    }
 
 
 def _appointment(slot: Slot) -> dict[str, Any]:
@@ -383,16 +430,30 @@ class YclientsProvider:
         await self._retrying("POST", f"book_check/{self.company_id}", body={"appointments": [_appointment(slot)]})
 
     async def create_booking(self, request: BookingRequest) -> BookingResult:
-        body = {
+        client = {
             "phone": _digits(request.client.phone),
-            "fullname": request.client.name,
+            "name": request.client.name,
             "email": request.client.email or "",
-            "comment": request.crm_comment(),
-            "api_id": request.idempotency_key[:64],
-            "appointments": [_appointment(request.slot)],
         }
+        if self.settings.user_token is not None:
+            # от имени салона через приложение: без SMS-кода клиенту
+            path = f"records/{self.company_id}"
+            body: dict[str, Any] = {
+                **_record_body(request.slot, client, request.crm_comment()),
+                "api_id": request.idempotency_key[:64],
+            }
+        else:
+            path = f"book_record/{self.company_id}"
+            body = {
+                "phone": client["phone"],
+                "fullname": client["name"],
+                "email": client["email"],
+                "comment": request.crm_comment(),
+                "api_id": request.idempotency_key[:64],
+                "appointments": [_appointment(request.slot)],
+            }
         try:
-            data = await self._send("POST", f"book_record/{self.company_id}", body=body)
+            data = await self._send("POST", path, body=body)
         except YclientsTimeoutError:
             # Запрос мог дойти до YCLIENTS: ищем запись, прежде чем сообщать об ошибке
             existing = await self.find_booking(request.slot, request.client.phone)
@@ -400,7 +461,8 @@ class YclientsProvider:
                 logger.info("yclients_booking_recovered_after_timeout", record_id=existing.external_id)
                 return existing
             raise
-        return _parse(parse_record, data, request.slot)
+        parser = parse_app_record if self.settings.user_token is not None else parse_record
+        return _parse(parser, data, request.slot)
 
     async def find_booking(self, slot: Slot, phone: str) -> BookingResult | None:
         if self.settings.user_token is None:
@@ -413,3 +475,52 @@ class YclientsProvider:
         }
         records = await self._retrying("GET", f"records/{self.company_id}", params=params)
         return _parse(find_record, records or [], slot, phone)
+
+    # ------------------------------------------------------------- записи от имени салона (user-токен)
+
+    def _require_user_token(self) -> None:
+        if self.settings.user_token is None:
+            raise ProviderAuthError("Нужен токен сотрудника YCLIENTS")
+
+    async def _record(self, external_id: str) -> dict[str, Any] | None:
+        self._require_user_token()
+        record_id = numeric_id(external_id, "запись")
+        try:
+            data = await self._retrying("GET", f"record/{self.company_id}/{record_id}")
+        except NotFoundError:
+            return None
+        return data if isinstance(data, dict) else None
+
+    async def get_booking(self, external_id: str) -> CrmBooking | None:
+        data = await self._record(external_id)
+        return None if data is None else _parse(parse_crm_record, data, self.tz)
+
+    async def reschedule_booking(self, external_id: str, slot: Slot) -> BookingResult:
+        """PUT не повторяется автоматически: YCLIENTS отправит клиенту SMS о переносе на каждый вызов."""
+        current = await self._record(external_id)
+        if current is None:
+            raise NotFoundError("Запись не найдена в системе записи салона")
+        raw_client = current.get("client") or {}
+        client = {"phone": _digits(str(raw_client.get("phone", ""))), "name": _text(raw_client.get("name")) or ""}
+        body = _record_body(slot, client, str(current.get("comment") or "Перенос через ИИ-администратора"))
+        record_id = numeric_id(external_id, "запись")
+        try:
+            await self._send("PUT", f"record/{self.company_id}/{record_id}", body=body)
+        except YclientsTimeoutError:
+            # Запрос мог дойти: если запись уже на новом времени — перенос состоялся
+            moved = await self.get_booking(external_id)
+            if moved is None or moved.slot.starts_at != slot.starts_at or moved.slot.master_id != slot.master_id:
+                raise
+        return BookingResult(external_id, slot)
+
+    async def cancel_booking(self, external_id: str) -> None:
+        self._require_user_token()
+        record_id = numeric_id(external_id, "запись")
+        try:
+            await self._send("DELETE", f"record/{self.company_id}/{record_id}")
+        except NotFoundError:
+            return  # уже удалена — результат тот же
+        except YclientsTimeoutError:
+            remaining = await self.get_booking(external_id)
+            if remaining is not None and remaining.active:
+                raise

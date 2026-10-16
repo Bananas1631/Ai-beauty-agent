@@ -14,7 +14,7 @@
 """
 
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -29,7 +29,7 @@ from beauty_agent.adapters.crm.factory import ProviderRegistry
 from beauty_agent.adapters.llm.base import LLMClient
 from beauty_agent.agent.budget import BUDGET_EXCEEDED_ANSWER, DailyBudget
 from beauty_agent.agent.loop import HANDOFF_ANSWER, Agent, AgentResult
-from beauty_agent.agent.registry import ToolContext
+from beauty_agent.agent.registry import ToolContext, ToolOutcome
 from beauty_agent.agent.router import build_router
 from beauty_agent.agent.state import StateStore
 from beauty_agent.agent.tools import CONSENT_REQUIRED, default_registry
@@ -98,6 +98,25 @@ class Reply:
     result: AgentResult | None = None
     outbox_key: str | None = None  # что доставить воркеру; при повторе задачи — тот же ключ
     draft_id: uuid.UUID | None = None  # теневой режим: черновик для администратора вместо ответа
+
+
+_PENDING_ACTIONS = {
+    "book": "подтвердите запись вручную",
+    "cancel_booking": "клиент просит отменить запись",
+    "reschedule_booking": "клиент просит перенести запись",
+}
+
+
+def pending_admin_notes(outcomes: Sequence[ToolOutcome]) -> list[str]:
+    """Что поручить администратору, когда CRM недоступна: запись, отмена или перенос — с деталями."""
+    notes = []
+    for outcome in outcomes:
+        if not outcome.result or outcome.result.get("status") != "pending_admin":
+            continue
+        details = outcome.result.get("old") or outcome.result
+        when = f": {details.get('service', '')}, {details.get('master', '')}, {details.get('when', '')}"
+        notes.append(f"CRM недоступна, {_PENDING_ACTIONS.get(outcome.name, 'обработайте запрос')}{when}")
+    return notes
 
 
 class ConversationService:
@@ -291,7 +310,9 @@ class ConversationService:
             timezone=salon.timezone,
             provider=self.providers.for_salon(salon),
             redis=self.redis,
-            ledger=SqlBookingLedger(session, salon.id),
+            ledger=SqlBookingLedger(
+                session, salon.id, timezone=salon.timezone, reminders=config.reminders_enabled, clock=self.clock
+            ),
         )
         ctx = ToolContext(
             salon_id=str(salon.id),
@@ -341,14 +362,9 @@ class ConversationService:
         await self.states.save(str(salon.id), str(conversation_id), state)
         if result.handed_off:
             await hand_off(session, self.notifier, salon.id, conversation_id, result.handoff_reason or "")
-        if any(outcome.result and outcome.result.get("status") == "pending_admin" for outcome in result.tool_calls):
+        for note in pending_admin_notes(result.tool_calls):
             await self.notifier.notify(
-                AdminEvent(
-                    AdminEventKind.BOOKING_PENDING,
-                    str(salon.id),
-                    str(conversation_id),
-                    "CRM недоступна: подтвердите запись вручную",
-                )
+                AdminEvent(AdminEventKind.BOOKING_PENDING, str(salon.id), str(conversation_id), note)
             )
         return Reply(
             answer,

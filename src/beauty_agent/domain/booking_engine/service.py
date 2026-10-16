@@ -7,12 +7,20 @@ confirm — принимает номер варианта, а не время. 
 слот в CRM без кэша, создаёт запись ровно один раз и сохраняет её в БД. Время заняли —
 новые варианты; CRM недоступна — запись в статусе «администратор подтвердит».
 
+client_bookings / cancel / reschedule — «мои записи», отмена и перенос. Список — только записи,
+сделанные из этого диалога-клиента (наша БД), сверенные с CRM: администратор мог перенести или
+отменить их в YCLIENTS. Поиск по телефону не используется: телефон, который назвал клиент,
+не подтверждён, и по чужому номеру нельзя увидеть или отменить чужую запись. Записи в списке
+пронумерованы, отмена и перенос — по номеру, с ключом идемпотентности.
+
 Почему не SERIALIZABLE: от гонки защищают ограничение исключения в bookings и уникальный
 ключ идемпотентности, а не уровень изоляции (docs/adr/006-hybrid-code-llm.md).
 """
 
 import hashlib
+import json
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -31,6 +39,7 @@ from beauty_agent.domain.enums import BookingStatus
 from beauty_agent.domain.errors import (
     BookingInProgressError,
     ConfirmationRequiredError,
+    DomainValidationError,
     NotFoundError,
     OfferExpiredError,
     ProviderAuthError,
@@ -43,6 +52,7 @@ logger = structlog.get_logger(__name__)
 SLOTS_TTL_S = 60
 CATALOG_TTL_S = 300
 BOOKING_KEY_TTL_S = 24 * 3600  # результат записи помним сутки: повторное «да» не создаст вторую
+CLIENT_BOOKINGS_TTL_S = 30 * 60
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +66,16 @@ class BookingEntry:
     idempotency_key: str
     external_id: str | None
     price: Decimal | None
+    client: ClientContact | None = None  # имя и телефон — в карточку клиента (согласие уже дано)
+
+
+@dataclass(frozen=True, slots=True)
+class StoredBooking:
+    """Запись из нашей БД для «моих записей»."""
+
+    external_id: str | None  # None — CRM была недоступна, запись ждёт подтверждения администратора
+    slot: Slot
+    status: BookingStatus
 
 
 class BookingLedger(Protocol):
@@ -63,11 +83,21 @@ class BookingLedger(Protocol):
 
     async def record(self, entry: BookingEntry) -> None: ...
 
+    async def upcoming(self, client_id: uuid.UUID, now: datetime) -> list[StoredBooking]:
+        """Будущие неотменённые записи клиента по времени."""
+        ...
+
+    async def cancel(self, external_id: str) -> None: ...
+
+    async def move(self, external_id: str, slot: Slot) -> None: ...
+
 
 class Outcome(StrEnum):
     CONFIRMED = "confirmed"
     PENDING_ADMIN = "pending_admin"  # CRM недоступна: администратор подтвердит вручную
     SLOT_TAKEN = "slot_taken"  # пока клиент думал, время заняли — предлагаем новое
+    CANCELLED = "cancelled"
+    RESCHEDULED = "rescheduled"
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +123,89 @@ class BookingOutcome:
             external_id=data.get("external_id"),
             alternatives=tuple(Offer.from_json(item) for item in data.get("alternatives", [])),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ClientBooking:
+    """Запись клиента в списке «мои записи» под номером."""
+
+    number: int
+    external_id: str | None
+    slot: Slot
+    service_name: str
+    master_name: str
+    pending: bool = False
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "number": self.number,
+            "external_id": self.external_id,
+            "slot": _slot_to_json(self.slot),
+            "service_name": self.service_name,
+            "master_name": self.master_name,
+            "pending": self.pending,
+        }
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "ClientBooking":
+        return cls(
+            number=int(data["number"]),
+            external_id=data.get("external_id"),
+            slot=_slot_from_json(data["slot"]),
+            service_name=data["service_name"],
+            master_name=data["master_name"],
+            pending=bool(data.get("pending")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ChangeOutcome:
+    """Результат отмены или переноса."""
+
+    status: Outcome
+    booking: ClientBooking
+    new_offer: Offer | None = None
+    alternatives: tuple[Offer, ...] = ()
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "booking": self.booking.to_json(),
+            "new_offer": self.new_offer.to_json() if self.new_offer else None,
+            "alternatives": [offer.to_json() for offer in self.alternatives],
+        }
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "ChangeOutcome":
+        return cls(
+            status=Outcome(data["status"]),
+            booking=ClientBooking.from_json(data["booking"]),
+            new_offer=Offer.from_json(data["new_offer"]) if data.get("new_offer") else None,
+            alternatives=tuple(Offer.from_json(item) for item in data.get("alternatives", [])),
+        )
+
+
+class ClientBookingStore:
+    """Список «мои записи» под номерами — как варианты времени: модель передаёт номер, а не ID записи."""
+
+    def __init__(self, redis: Redis, *, ttl_s: int = CLIENT_BOOKINGS_TTL_S) -> None:
+        self.redis = redis
+        self.ttl_s = ttl_s
+
+    @staticmethod
+    def _key(salon_id: str, conversation_id: str) -> str:
+        return key("client_bookings", salon_id, conversation_id)
+
+    async def save(self, salon_id: str, conversation_id: str, bookings: list[ClientBooking]) -> None:
+        payload = json.dumps([booking.to_json() for booking in bookings], ensure_ascii=False)
+        await self.redis.set(self._key(salon_id, conversation_id), payload, ex=self.ttl_s)
+
+    async def get(self, salon_id: str, conversation_id: str, number: int) -> ClientBooking | None:
+        raw = await self.redis.get(self._key(salon_id, conversation_id))
+        for item in json.loads(raw) if raw else []:
+            if item["number"] == number:
+                return ClientBooking.from_json(item)
+        return None
 
 
 def _service_to_json(service: ServiceInfo) -> dict[str, Any]:
@@ -148,6 +261,7 @@ class BookingService:
         self.ledger = ledger
         self.cache = JsonCache(redis)
         self.offers = OfferStore(redis)
+        self.client_bookings_store = ClientBookingStore(redis)
         self.idempotency = IdempotencyStore(redis, ttl_s=BOOKING_KEY_TTL_S)
         self.redis = redis
 
@@ -271,7 +385,9 @@ class BookingService:
         claim_name = key("idem", "booking", idempotency_key)
 
         def entry(status: BookingStatus, external_id: str | None) -> BookingEntry:
-            return BookingEntry(conversation_id, client_id, offer.slot, status, idempotency_key, external_id, price)
+            return BookingEntry(
+                conversation_id, client_id, offer.slot, status, idempotency_key, external_id, price, client
+            )
 
         try:
             await self.provider.check_slot(offer.slot)  # без кэша: окно могли занять минуту назад
@@ -312,3 +428,148 @@ class BookingService:
         except ProviderUnavailableError:
             return ()
         return tuple(offers)
+
+    # ------------------------------------------------------------- мои записи, отмена, перенос
+
+    async def _names(self, slot: Slot) -> tuple[str, str]:
+        try:
+            service_name = (await self.service(slot.service_id)).name
+            master_name = (await self.master_names(slot.service_id)).get(slot.master_id, "мастер")
+        except (NotFoundError, ProviderUnavailableError):
+            return "услуга", "мастер"
+        return service_name, master_name
+
+    async def client_bookings(
+        self, conversation_id: str, client_id: uuid.UUID | None, now: datetime
+    ) -> list[ClientBooking]:
+        """Будущие записи клиента, сверенные с CRM, под номерами 1…N."""
+        stored = await self.ledger.upcoming(client_id, now) if client_id is not None else []
+        found: list[ClientBooking] = []
+        for item in stored:
+            slot = item.slot
+            if item.external_id is not None:
+                try:
+                    in_crm = await self.provider.get_booking(item.external_id)
+                except (ProviderUnavailableError, ProviderAuthError):
+                    in_crm = None  # CRM недоступна — показываем то, что знаем
+                    verified = False
+                else:
+                    verified = True
+                if verified and (in_crm is None or not in_crm.active):
+                    await self.ledger.cancel(item.external_id)  # отменили в YCLIENTS
+                    continue
+                if in_crm is not None and in_crm.slot.key != slot.key:
+                    await self.ledger.move(item.external_id, in_crm.slot)  # перенесли в YCLIENTS
+                    slot = in_crm.slot
+                if slot.starts_at <= now:
+                    continue
+            service_name, master_name = await self._names(slot)
+            found.append(
+                ClientBooking(
+                    number=len(found) + 1,
+                    external_id=item.external_id,
+                    slot=slot,
+                    service_name=service_name,
+                    master_name=master_name,
+                    pending=item.status is BookingStatus.PENDING,
+                )
+            )
+        await self.client_bookings_store.save(self.salon_id, conversation_id, found)
+        return found
+
+    async def _client_booking(self, conversation_id: str, number: int, now: datetime) -> ClientBooking:
+        booking = await self.client_bookings_store.get(self.salon_id, conversation_id, number)
+        if booking is None:
+            raise OfferExpiredError("Список записей устарел — запросите его заново")
+        if booking.slot.starts_at <= now:
+            raise DomainValidationError("Эта запись уже прошла")
+        return booking
+
+    async def _change(
+        self,
+        claim_name: str,
+        booking: ClientBooking,
+        action: Callable[[], Awaitable[None]],
+        done: ChangeOutcome,
+        apply: Callable[[], Awaitable[None]],
+    ) -> ChangeOutcome:
+        """Общий порядок отмены и переноса: ключ → CRM → (после успеха ничего не бросать) → БД."""
+        claim = await self.idempotency.begin(claim_name)
+        if claim.state == "done" and claim.result is not None:
+            return ChangeOutcome.from_json(claim.result)
+        if claim.state == "in_progress":
+            raise BookingInProgressError
+        try:
+            await action()
+        except (ProviderUnavailableError, ProviderAuthError) as exc:
+            await self.idempotency.release(claim_name)
+            logger.warning("booking_change_pending_admin", reason=type(exc).__name__)
+            return ChangeOutcome(Outcome.PENDING_ADMIN, booking, done.new_offer)
+        except BaseException:
+            await self.idempotency.release(claim_name)
+            raise
+        try:
+            await self.idempotency.complete(claim_name, done.to_json())
+            await self.invalidate_slots()
+        except Exception:
+            logger.exception("booking_cache_update_failed", external_id=booking.external_id)
+        try:
+            await apply()
+        except Exception:
+            logger.exception("booking_ledger_failed", external_id=booking.external_id)
+        return done
+
+    async def cancel(self, conversation_id: str, number: int, now: datetime) -> ChangeOutcome:
+        booking = await self._client_booking(conversation_id, number, now)
+        external_id = booking.external_id
+        if external_id is None:
+            return ChangeOutcome(Outcome.PENDING_ADMIN, booking)
+
+        async def action() -> None:
+            await self.provider.cancel_booking(external_id)
+
+        async def apply() -> None:
+            await self.ledger.cancel(external_id)
+
+        outcome = await self._change(
+            key("idem", "cancel", self.salon_id, external_id),
+            booking,
+            action,
+            ChangeOutcome(Outcome.CANCELLED, booking),
+            apply,
+        )
+        logger.info("booking_change", status=outcome.status.value, external_id=external_id)
+        return outcome
+
+    async def reschedule(self, conversation_id: str, number: int, option: int, now: datetime) -> ChangeOutcome:
+        booking = await self._client_booking(conversation_id, number, now)
+        offer = await self.offers.get(self.salon_id, conversation_id, option)
+        if offer is None:
+            raise OfferExpiredError
+        if offer.slot.service_id != booking.slot.service_id:
+            raise DomainValidationError("Перенести можно на ту же услугу; другую услугу — новой записью")
+        external_id = booking.external_id
+        if external_id is None:
+            return ChangeOutcome(Outcome.PENDING_ADMIN, booking, offer)
+        move_key = hashlib.sha256(f"{external_id}|{offer.slot.key}".encode()).hexdigest()
+
+        async def action() -> None:
+            await self.provider.reschedule_booking(external_id, offer.slot)
+
+        async def apply() -> None:
+            await self.ledger.move(external_id, offer.slot)
+
+        try:
+            outcome = await self._change(
+                key("idem", "move", self.salon_id, move_key),
+                booking,
+                action,
+                ChangeOutcome(Outcome.RESCHEDULED, booking, offer),
+                apply,
+            )
+        except SlotTakenError:
+            await self.invalidate_slots()
+            alternatives = await self._alternatives(conversation_id, offer)
+            return ChangeOutcome(Outcome.SLOT_TAKEN, booking, offer, alternatives)
+        logger.info("booking_change", status=outcome.status.value, external_id=external_id)
+        return outcome

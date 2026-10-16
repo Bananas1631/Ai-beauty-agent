@@ -17,7 +17,7 @@ from beauty_agent.adapters.crm.base import BookingProvider
 from beauty_agent.agent.registry import Tool, ToolContext, ToolRegistry
 from beauty_agent.catalog.importer import salon_card_text
 from beauty_agent.domain.booking_engine.offers import Offer, PartOfDay
-from beauty_agent.domain.booking_engine.service import BookingService, Outcome
+from beauty_agent.domain.booking_engine.service import BookingService, ChangeOutcome, ClientBooking, Outcome
 from beauty_agent.domain.entities import ClientContact, MasterInfo, ServiceInfo
 from beauty_agent.domain.errors import DomainValidationError
 
@@ -176,6 +176,19 @@ class HandoffArgs(StrictArgs):
     reason: str = Field(min_length=2, max_length=300, description="Коротко, почему нужен администратор")
 
 
+class MyBookingsArgs(StrictArgs):
+    """Без аргументов: записи клиента этого чата."""
+
+
+class CancelBookingArgs(StrictArgs):
+    booking: int = Field(ge=1, le=10, description="Номер записи из my_bookings")
+
+
+class RescheduleBookingArgs(StrictArgs):
+    booking: int = Field(ge=1, le=10, description="Номер записи из my_bookings")
+    option: int = Field(ge=1, le=3, description="Номер нового времени из find_free_time для той же услуги")
+
+
 # ---------------------------------------------------------------- обработчики
 
 
@@ -290,6 +303,64 @@ async def book_without_consent(args: BookWithoutConsentArgs, ctx: ToolContext) -
     }
 
 
+def _client_booking_json(booking: ClientBooking, tz: Any) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "booking": booking.number,
+        "when": format_local(booking.slot.starts_at.astimezone(tz)),
+        "service": booking.service_name,
+        "master": booking.master_name,
+    }
+    if booking.pending:
+        data["note"] = "ждёт подтверждения администратора"
+    return data
+
+
+async def my_bookings(args: MyBookingsArgs, ctx: ToolContext) -> dict[str, Any]:
+    bookings = await ctx.booking.client_bookings(ctx.conversation_id, ctx.client_id, ctx.now)
+    if not bookings:
+        return {
+            "bookings": [],
+            "hint": "Будущих записей через этот чат нет. Записи, сделанные по телефону, уточнит администратор.",
+        }
+    return {
+        "bookings": [_client_booking_json(booking, ctx.now.tzinfo) for booking in bookings],
+        "hint": "Назови записи с номерами. Перенести или отменить можно по номеру записи.",
+    }
+
+
+def _change_json(outcome: ChangeOutcome, ctx: ToolContext) -> dict[str, Any]:
+    old = _client_booking_json(outcome.booking, ctx.now.tzinfo)
+    if outcome.status is Outcome.CANCELLED:
+        return {"status": "cancelled", **old, "message": "Запись отменена."}
+    if outcome.status is Outcome.RESCHEDULED and outcome.new_offer is not None:
+        return {
+            "status": "rescheduled",
+            "old": old,
+            "new": _offer_json(outcome.new_offer, ctx.now.tzinfo),
+            "message": "Запись перенесена.",
+        }
+    if outcome.status is Outcome.SLOT_TAKEN:
+        return {
+            "status": "slot_taken",
+            "message": "Это время только что заняли, запись осталась на прежнем времени. Вот новые варианты.",
+            "options": [_offer_json(offer, ctx.now.tzinfo) for offer in outcome.alternatives],
+        }
+    return {
+        "status": "pending_admin",
+        **old,
+        "message": "Система записи салона недоступна. Администратор получит просьбу и сам изменит запись.",
+    }
+
+
+async def cancel_booking(args: CancelBookingArgs, ctx: ToolContext) -> dict[str, Any]:
+    return _change_json(await ctx.booking.cancel(ctx.conversation_id, args.booking, ctx.now), ctx)
+
+
+async def reschedule_booking(args: RescheduleBookingArgs, ctx: ToolContext) -> dict[str, Any]:
+    outcome = await ctx.booking.reschedule(ctx.conversation_id, args.booking, args.option, ctx.now)
+    return _change_json(outcome, ctx)
+
+
 async def handoff_to_admin(args: HandoffArgs, ctx: ToolContext) -> dict[str, Any]:
     ctx.handoff_reason = args.reason
     return {"status": "handed_off", "message": "Администратор получил диалог и ответит в рабочее время."}
@@ -320,6 +391,25 @@ TOOLS: tuple[Tool, ...] = (
         "Сведения о салоне: адрес, часы работы, оплата, правила, подготовка к процедуре.",
         SalonInfoArgs,
         salon_info,
+    ),
+    Tool(
+        "my_bookings",
+        "Будущие записи клиента, сделанные через этот чат, с номерами для переноса и отмены.",
+        MyBookingsArgs,
+        my_bookings,
+    ),
+    Tool(
+        "cancel_booking",
+        "Отменить запись по номеру из my_bookings. Вызывать только после явного подтверждения клиента.",
+        CancelBookingArgs,
+        cancel_booking,
+    ),
+    Tool(
+        "reschedule_booking",
+        "Перенести запись по номеру из my_bookings на вариант из find_free_time той же услуги. "
+        "Вызывать только после явного подтверждения клиента.",
+        RescheduleBookingArgs,
+        reschedule_booking,
     ),
     Tool("handoff_to_admin", "Передать диалог живому администратору.", HandoffArgs, handoff_to_admin),
 )

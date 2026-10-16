@@ -7,7 +7,7 @@ from string import Template
 
 from beauty_agent.agent.tools import format_local
 
-DEFAULT_PROMPT_VERSION = "v1"
+DEFAULT_PROMPT_VERSION = "v2"  # v2: перенос и отмена записи; v1 — для сравнения в evals
 
 
 @cache

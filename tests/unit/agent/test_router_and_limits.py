@@ -106,7 +106,7 @@ async def test_rate_limiter(redis: FakeAsyncRedis) -> None:
 def test_salon_settings_defaults_and_validation() -> None:
     settings = SalonSettings.model_validate({})
 
-    assert settings.prompt_version == "v1"
+    assert settings.prompt_version == "v2"
     assert settings.daily_llm_budget_rub == Decimal(300)
     assert SalonSettings(allowed_origins=["https://Studio.Example/"]).allowed_origins == ["https://studio.example"]
     for bad in ({"allowed_origins": ["http://insecure.example"]}, {"prompt_version": "../v1"}, {"unknown": 1}):

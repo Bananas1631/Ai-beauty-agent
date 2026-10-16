@@ -5,7 +5,7 @@
 
 from beauty_agent.db.base import Base
 from beauty_agent.db.models.admin import Draft, SalonAdmin
-from beauty_agent.db.models.booking import Booking
+from beauty_agent.db.models.booking import Booking, Reminder
 from beauty_agent.db.models.catalog import Master, MasterService, Service
 from beauty_agent.db.models.client import Client, ClientIdentity
 from beauty_agent.db.models.consent import Consent
@@ -29,6 +29,7 @@ __all__ = [
     "MasterService",
     "Message",
     "OutboundMessage",
+    "Reminder",
     "Salon",
     "SalonAdmin",
     "Service",

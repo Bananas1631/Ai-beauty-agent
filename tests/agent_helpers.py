@@ -8,18 +8,11 @@ from fakeredis import FakeAsyncRedis
 from beauty_agent.adapters.crm.fake import FakeCRM
 from beauty_agent.agent.registry import ToolContext
 from beauty_agent.agent.tools import CardSalonInfo, ProviderCatalog
-from beauty_agent.domain.booking_engine.service import BookingEntry, BookingService
+from beauty_agent.domain.booking_engine.memory import MemoryLedger
+from beauty_agent.domain.booking_engine.service import BookingService
 
 MSK = ZoneInfo("Europe/Moscow")
 NOW = datetime(2026, 10, 19, 9, 0, tzinfo=MSK)  # понедельник, утро
-
-
-class MemoryLedger:
-    def __init__(self) -> None:
-        self.entries: list[BookingEntry] = []
-
-    async def record(self, entry: BookingEntry) -> None:
-        self.entries.append(entry)
 
 
 def make_context(

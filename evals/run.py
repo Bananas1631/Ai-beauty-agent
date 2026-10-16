@@ -34,6 +34,7 @@ from beauty_agent.agent.state import DialogState
 from beauty_agent.agent.tools import CardSalonInfo, ProviderCatalog, default_registry
 from beauty_agent.core.config import get_settings
 from beauty_agent.core.logging import configure_logging
+from beauty_agent.domain.booking_engine.memory import MemoryLedger
 from beauty_agent.domain.booking_engine.offers import Offer, PartOfDay
 from beauty_agent.domain.booking_engine.service import BookingEntry, BookingService
 from evals.judge import Judge, LLMJudge, RuleJudge
@@ -59,7 +60,7 @@ CATALOG_PRICES = frozenset(
 _DATASET_NAME = re.compile(r"^[a-z0-9_]+/v\d+$")
 
 
-class NullLedger:
+class NullLedger(MemoryLedger):
     async def record(self, entry: BookingEntry) -> None:
         return None
 

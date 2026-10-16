@@ -93,7 +93,7 @@ async def test_one_message_is_one_trace_with_all_steps(redis: FakeAsyncRedis) ->
     assert "found" in tool.updates["output"]
     assert trace.updates["output"] == "Педикюр с покрытием — 3 200 ₽."
     assert trace.updates["cost_rub"] == Decimal("0.02")
-    assert trace.updates["metadata_start"]["prompt_version"] == "v1"
+    assert trace.updates["metadata_start"]["prompt_version"] == "v2"
     assert all(child.ended for child in trace.children)
     assert trace.ended
 
