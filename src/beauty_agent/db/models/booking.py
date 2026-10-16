@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Numeric, String, UniqueConstraint, column, false, func
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Numeric, String, UniqueConstraint, column, false, func, text
 from sqlalchemy.dialects.postgresql import ExcludeConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,6 +28,30 @@ class Booking(UUIDPrimaryKey, SalonOwned, Timestamps, Base):
             where=column("status") != BookingStatus.CANCELLED.value,
             using="gist",
             name="ex_bookings_master_overlap",
+        ),
+        # Индексы аналитики (docs/performance.md, миграция 0007): «салон + период» по неотменённым
+        # записям с колонками отчётов в INCLUDE — Index Only Scan без чтения таблицы
+        Index(
+            "ix_bookings_salon_period",
+            "salon_id",
+            "starts_at",
+            postgresql_include=["ends_at", "master_id", "service_id", "client_id", "price", "status"],
+            postgresql_where=column("status") != BookingStatus.CANCELLED.value,
+        ),
+        Index(
+            "ix_bookings_salon_created",
+            "salon_id",
+            "created_at",
+            postgresql_include=["created_by_ai", "status"],
+            postgresql_where=column("status") != BookingStatus.CANCELLED.value,
+        ),
+        # визиты клиента по порядку — для LAG без сортировки
+        Index(
+            "ix_bookings_salon_client_visits",
+            "salon_id",
+            "client_id",
+            "starts_at",
+            postgresql_where=text("status IN ('confirmed', 'completed') AND client_id IS NOT NULL"),
         ),
     )
 

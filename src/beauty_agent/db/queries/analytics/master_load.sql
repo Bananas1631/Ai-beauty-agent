@@ -26,28 +26,39 @@ days AS (
     ) AS day
     GROUP BY 1
 ),
-local_bookings AS (
+local_bookings AS MATERIALIZED (
+    -- перевод в пояс салона и число часовых клеток — один раз на запись, а не на каждую клетку
     SELECT
         master_id,
-        starts_at AT TIME ZONE CAST(:tz AS text) AS local_start,
-        ends_at AT TIME ZONE CAST(:tz AS text) AS local_end
-    FROM bookings
-    WHERE salon_id = CAST(:salon_id AS uuid)
-      AND status <> 'cancelled'
-      AND starts_at < CAST(:period_end AS timestamptz)
-      AND ends_at > CAST(:period_start AS timestamptz)
+        local_start,
+        local_end,
+        date_trunc('hour', local_start) AS first_cell,
+        CAST(ceil(extract(epoch FROM local_end - date_trunc('hour', local_start)) / 3600) AS integer) AS cells
+    FROM (
+        SELECT
+            master_id,
+            starts_at AT TIME ZONE CAST(:tz AS text) AS local_start,
+            ends_at AT TIME ZONE CAST(:tz AS text) AS local_end
+        FROM bookings
+        WHERE salon_id = CAST(:salon_id AS uuid)
+          AND status <> 'cancelled'
+          AND starts_at < CAST(:period_end AS timestamptz)
+          AND ends_at > CAST(:period_start AS timestamptz)
+    ) AS raw
 ),
 busy AS (
+    -- Клетки записи — смещения от часа начала в пределах её длины. Не generate_series по каждой
+    -- записи: для такой функции планировщик предполагает 1000 строк на запись и уходит
+    -- в параллельный план, который дороже самой работы (docs/performance.md).
     SELECT
         b.master_id,
-        CAST(extract(isodow FROM cell) AS integer) AS dow,
-        CAST(extract(hour FROM cell) AS integer) AS hour,
-        sum(extract(epoch FROM least(b.local_end, cell + interval '1 hour') - greatest(b.local_start, cell)) / 60)
+        CAST(extract(isodow FROM c.cell) AS integer) AS dow,
+        CAST(extract(hour FROM c.cell) AS integer) AS hour,
+        sum(extract(epoch FROM least(b.local_end, c.cell + interval '1 hour') - greatest(b.local_start, c.cell)) / 60)
             AS minutes
     FROM local_bookings AS b
-    CROSS JOIN LATERAL generate_series(
-        date_trunc('hour', b.local_start), b.local_end - interval '1 microsecond', interval '1 hour'
-    ) AS cell
+    JOIN generate_series(0, 23) AS k (offset_hours) ON k.offset_hours < b.cells
+    CROSS JOIN LATERAL (SELECT b.first_cell + make_interval(hours => k.offset_hours) AS cell) AS c
     GROUP BY 1, 2, 3
 )
 SELECT
