@@ -7,16 +7,24 @@
 
 - VPS в РФ: 2 vCPU, 2–4 ГБ ОЗУ, 40 ГБ диска, Ubuntu 24.04. Данные клиентов не покидают РФ (152-ФЗ).
 - DNS: A-запись домена (например, `app.example.ru`) на IP сервера.
-- Пользователь для деплоя без root и вход только по ключу:
+- Пользователь для деплоя без root, firewall и вход только по ключу:
 
 ```bash
 adduser --disabled-password deploy && usermod -aG docker deploy
 mkdir -p /opt/beauty-agent && chown deploy: /opt/beauty-agent
-# /etc/ssh/sshd_config: PasswordAuthentication no, PermitRootLogin no
-ufw allow OpenSSH && ufw allow 80,443/tcp && ufw allow 443/udp && ufw enable
+# положить публичный ключ в /home/deploy/.ssh/authorized_keys, затем:
+sudo DEPLOY_USER=deploy ./firewall.sh   # ufw: только SSH (с лимитом попыток), 80, 443; sshd — только ключ
 ```
 
-Порты PostgreSQL и Redis наружу не открываются: compose их не публикует.
+Порты PostgreSQL, Redis, RabbitMQ, Prometheus наружу не открываются: compose их не публикует,
+Grafana слушает только 127.0.0.1. Docker публикует порты мимо ufw — поэтому важно, что
+опубликованы только 80 и 443 у Caddy.
+
+**Таймауты на каждом звене**: Caddy — заголовки запроса 10 с, тело 30 с, простой соединения 2 мин,
+ответ api — 60 с; uvicorn — keep-alive 5 с (меньше, чем у Caddy), 25 с на завершение при остановке;
+PostgreSQL — `statement_timeout` 15 с и `idle_in_transaction_session_timeout` 60 с для приложения
+(у миграций без ограничения), ожидание соединения из пула — 10 с; Redis — 2 с; HTTP-клиенты
+YCLIENTS, LLM и мессенджеров — 10–30 с; задачи Celery — 300 с.
 
 ## 2. Секреты на сервере
 
@@ -50,6 +58,11 @@ BACKUP_REMOTE=s3-ru:beauty-backups
 2. Settings → Variables: `DEPLOY_ENABLED=true`.
 3. Каждый зелёный CI на `main` собирает образ, отправляет его в GHCR, копирует на сервер
    compose-файлы, применяет миграции, перезапускает контейнеры и ждёт `/ready`.
+4. **Автооткат**: если новая версия не ответила на `/ready` за минуту, деплой поднимает прошлый
+   образ (из `.env`) и падает с ошибкой. Схема при этом не откатывается: миграции только
+   обратно совместимые — `scripts/check_migrations.py` в CI не пропустит удаление или
+   переименование колонки и `NOT NULL` без значения по умолчанию. Ломающее изменение делается
+   в два релиза (expand/contract) и помечается в миграции комментарием `# contract: <причина>`.
 
 Ручной запуск — Actions → Deploy → Run workflow.
 
@@ -63,16 +76,18 @@ gpg --import backup-public.asc          # приватный ключ на се�
 crontab -e   # 30 3 * * * /opt/beauty-agent/backup.sh >> /var/log/beauty-agent/backup.log 2>&1
 ```
 
-**Проверка восстановления** (один раз после настройки и после крупных миграций),
-на отдельной машине, где есть приватный ключ:
+**Проверка восстановления — каждую неделю, автоматически.** `restore_check.sh` на отдельной
+машине в РФ, где лежит приватный ключ: скачивает последний бэкап из хранилища, потоком расшифровывает
+его в одноразовый PostgreSQL без портов наружу, проверяет версию схемы и данные и пингует мониторинг.
+Нет пинга — тревога: бэкап не восстанавливается, не делается или проверка не запустилась.
 
 ```bash
-gpg --decrypt beauty-<stamp>.dump.gpg > restore.dump
-docker run -d --name restore-check -e POSTGRES_PASSWORD=check pgvector/pgvector:pg17
-docker cp restore.dump restore-check:/tmp/
-docker exec restore-check pg_restore -U postgres -d postgres --no-owner /tmp/restore.dump
-docker exec restore-check psql -U postgres -c "select count(*) from bookings"
-docker rm -f restore-check && shred -u restore.dump
+# на машине проверки: docker, gpg (с приватным ключом), rclone с доступом к хранилищу
+mkdir -p /opt/restore-check && cp restore_check.sh /opt/restore-check/
+printf 'BACKUP_REMOTE=s3-ru:beauty-backups
+RESTORE_CHECK_PING_URL=https://hc.example.ru/ping/<uuid>
+'   > /opt/restore-check/.env && chmod 600 /opt/restore-check/.env
+crontab -e   # 0 6 * * 0 /opt/restore-check/restore_check.sh >> /var/log/restore-check.log 2>&1
 ```
 
 ## 5. Мониторинг

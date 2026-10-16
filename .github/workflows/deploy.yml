@@ -95,7 +95,7 @@ jobs:
           scp deploy/docker-compose.prod.yml deploy/Caddyfile deploy/backup.sh "$USER@$HOST:/opt/beauty-agent/"
           # конфигурация мониторинга: Prometheus, дашборды и алерты Grafana
           scp -r deploy/prometheus deploy/grafana "$USER@$HOST:/opt/beauty-agent/"
-      - name: Pull, migrate, restart, wait for /ready
+      - name: Pull, migrate, restart, wait for /ready, roll back on failure
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USER: ${{ secrets.DEPLOY_USER }}
@@ -104,21 +104,44 @@ jobs:
           ssh "$USER@$HOST" "APP_IMAGE='$IMAGE' bash -s" <<'REMOTE'
           set -euo pipefail
           cd /opt/beauty-agent
-          export APP_IMAGE
           compose="docker compose -f docker-compose.prod.yml"
+          # прошлая рабочая версия — для автоотката; .env обновляется только после успешного /ready
+          previous="$(grep -E '^APP_IMAGE=' .env | cut -d= -f2- || true)"
+
+          ready() {
+            for attempt in $(seq 1 30); do
+              if $compose exec -T api python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=3)" >/dev/null 2>&1; then
+                echo "ready after $attempt attempts"
+                return 0
+              fi
+              sleep 2
+            done
+            return 1
+          }
+
+          export APP_IMAGE
           $compose pull api
+          # Миграции — до смены кода. Они обратно совместимы (scripts/check_migrations.py в CI),
+          # поэтому и прошлая версия кода работает с новой схемой: откат кода не трогает схему.
           $compose run --rm api alembic upgrade head
           $compose up -d --remove-orphans
-          for attempt in $(seq 1 30); do
-            if $compose exec -T api python -c "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/ready', timeout=3)"; then
-              echo "ready after $attempt attempts"
-              # образ записывается в .env, чтобы ручной docker compose up поднимал ту же версию
-              sed -i "s#^APP_IMAGE=.*#APP_IMAGE=$APP_IMAGE#" .env
-              exit 0
+          if ready; then
+            # образ записывается в .env, чтобы ручной docker compose up поднимал ту же версию
+            sed -i "s#^APP_IMAGE=.*#APP_IMAGE=$APP_IMAGE#" .env
+            exit 0
+          fi
+
+          echo "::error::api is not ready on $APP_IMAGE" >&2
+          $compose logs --tail 80 api >&2
+          if [ -n "$previous" ] && [ "$previous" != "$APP_IMAGE" ]; then
+            echo "rolling back to $previous" >&2
+            export APP_IMAGE="$previous"
+            $compose up -d --remove-orphans
+            if ready; then
+              echo "::warning::rolled back to $previous" >&2
+            else
+              echo "::error::rollback to $previous is not ready either — docs/runbook.md" >&2
             fi
-            sleep 2
-          done
-          echo "api is not ready" >&2
-          $compose logs --tail 50 api >&2
+          fi
           exit 1
           REMOTE

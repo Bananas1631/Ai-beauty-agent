@@ -51,5 +51,8 @@ HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
     "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health')"]
 
 # Exec-форма: uvicorn — процесс с PID 1 и сам получает SIGTERM от docker stop
+# keep-alive 5 с — меньше, чем у Caddy: прокси не отправит запрос в соединение, которое uvicorn
+# как раз закрывает; при остановке — 25 с, чтобы дописать ответы (stop_grace_period в compose — 30 с)
 CMD ["uvicorn", "beauty_agent.api.main:create_app", "--factory", \
-     "--host", "0.0.0.0", "--port", "8000"]
+     "--host", "0.0.0.0", "--port", "8000", \
+     "--timeout-keep-alive", "5", "--timeout-graceful-shutdown", "25"]

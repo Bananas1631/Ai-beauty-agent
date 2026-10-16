@@ -2,6 +2,15 @@
 # DOMAIN и ACME_EMAIL приходят из .env через docker-compose.prod.yml.
 {
 	email {$ACME_EMAIL}
+	# Таймауты входа: медленный клиент не держит соединения бесконечно (slowloris).
+	# write не задаём: ответы WebSocket-чата идут минутами в одном соединении.
+	servers {
+		timeouts {
+			read_header 10s
+			read_body 30s
+			idle 2m
+		}
+	}
 }
 
 {$DOMAIN} {
@@ -24,5 +33,14 @@
 		max_size 1MB
 	}
 
-	reverse_proxy api:8000
+	reverse_proxy api:8000 {
+		transport http {
+			dial_timeout 5s
+			# дольше самого медленного HTTP-ответа API; вебхуки и страницы — миллисекунды
+			response_header_timeout 60s
+			keepalive 30s
+		}
+		# при перезагрузке конфигурации WebSocket-соединения чата не рвутся сразу
+		stream_close_delay 5m
+	}
 }

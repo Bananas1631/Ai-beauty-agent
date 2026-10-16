@@ -14,11 +14,20 @@ from sqlalchemy.ext.asyncio import (
 from beauty_agent.core.config import PostgresSettings
 
 
-def make_engine(settings: PostgresSettings, *, echo: bool = False) -> AsyncEngine:
-    """Движок — пул соединений с базой, один на всё приложение."""
+def make_engine(settings: PostgresSettings, *, echo: bool = False, migrations: bool = False) -> AsyncEngine:
+    """Движок — пул соединений с базой, один на всё приложение.
+
+    migrations=True — без statement_timeout: CREATE INDEX CONCURRENTLY на большой таблице идёт минуты.
+    """
+    server_settings = {
+        "statement_timeout": "0" if migrations else str(settings.statement_timeout_ms),
+        "idle_in_transaction_session_timeout": str(settings.idle_in_transaction_timeout_ms),
+        "application_name": "beauty-agent-migrations" if migrations else "beauty-agent",
+    }
     return create_async_engine(
         settings.url,
         echo=echo,  # True — печатать каждый SQL-запрос, только для отладки
+        connect_args={"server_settings": server_settings, "timeout": settings.connect_timeout_s},
         pool_size=settings.pool_size,  # постоянных соединений в пуле
         max_overflow=settings.max_overflow,  # временных сверх них при пиковой нагрузке
         pool_timeout=settings.pool_timeout_s,

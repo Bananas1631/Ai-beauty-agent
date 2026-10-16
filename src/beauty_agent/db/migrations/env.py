@@ -65,7 +65,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     """Движок — тот же, что у приложения; миграции выполняются в одной транзакции."""
-    engine = make_engine(postgres_settings())
+    engine = make_engine(postgres_settings(), migrations=True)
     try:
         async with engine.connect() as connection:
             await connection.run_sync(do_run_migrations)

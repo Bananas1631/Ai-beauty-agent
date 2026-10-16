@@ -9,7 +9,7 @@ COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
 
 help:
 	@echo make install   - install dependencies and git hooks
-	@echo make lint      - ruff: errors, style and formatting
+	@echo make lint      - ruff: errors, style and formatting; migrations are backward compatible
 	@echo make format    - ruff: fix and format the code
 	@echo make typecheck - mypy in strict mode
 	@echo make test      - pytest with coverage, minimum 80 percent
@@ -33,6 +33,7 @@ install:
 lint:
 	$(RUN) ruff check .
 	$(RUN) ruff format --check .
+	$(RUN) python -m scripts.check_migrations
 
 format:
 	$(RUN) ruff check --fix .

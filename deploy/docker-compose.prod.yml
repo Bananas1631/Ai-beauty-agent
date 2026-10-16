@@ -32,6 +32,8 @@ services:
       FORWARDED_ALLOW_IPS: "*"
     expose:
       - "8000"
+    # время дописать ответы перед остановкой (uvicorn --timeout-graceful-shutdown 25)
+    stop_grace_period: 30s
     read_only: true
     tmpfs:
       - /tmp
@@ -66,6 +68,9 @@ services:
       POSTGRES_MAX_OVERFLOW: "2"
     command: ["celery", "-A", "beauty_agent.workers.celery_app", "worker", "-Q", "messages,periodic",
               "--concurrency", "4", "--loglevel", "INFO"]
+    # воркер дорабатывает текущую задачу (time limit задачи — 300 с, обычно секунды);
+    # недоделанная после SIGKILL вернётся в очередь — acks_late
+    stop_grace_period: 60s
     healthcheck:
       disable: true
 

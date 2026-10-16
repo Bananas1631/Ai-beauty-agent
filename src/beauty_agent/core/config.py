@@ -56,6 +56,11 @@ class PostgresSettings(EnvSection):
     pool_size: int = 10
     max_overflow: int = 5
     pool_timeout_s: float = 10.0  # нет свободного соединения 10 с — ошибка, а не бесконечное ожидание
+    connect_timeout_s: float = 5.0
+    # Страховка на стороне PostgreSQL: зависший запрос и забытая открытая транзакция
+    # не держат соединение и блокировки вечно. 0 — без ограничения (миграции).
+    statement_timeout_ms: int = 15_000
+    idle_in_transaction_timeout_ms: int = 60_000
 
     @property
     def url(self) -> URL:
