@@ -2,9 +2,10 @@
 
 Отчёт по понедельникам за прошлую неделю (по времени салона):
 - записи через ИИ и их оценка в рублях — число записей × средний чек (из настроек салона,
-  иначе — средняя цена записей салона за 90 дней);
+  иначе — средний чек визитов салона за 90 дней);
 - ответы клиентам вне рабочего времени администраторов — то, что без ИИ ждало бы утра;
 - стоимость LLM на салон — ответы агента и черновики, которые не ушли клиенту.
+Цифры по записям — из аналитики на чистом SQL (db/queries/analytics, AnalyticsRepository).
 Выгрузка для счёта строится по правилу domain/billing.py — тому же, что в договоре.
 """
 
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from beauty_agent.conversation.notifications import AdminEvent, AdminEventKind, Notifier
 from beauty_agent.db.models import Booking, Draft, Master, Message, Salon, Service
+from beauty_agent.db.repositories.analytics import AnalyticsRepository
 from beauty_agent.domain.billing import BILLABLE_STATUSES, BillingPeriod, invoice_total
 from beauty_agent.domain.entities import format_rub
 from beauty_agent.domain.enums import BookingStatus, DraftStatus, MessageRole
@@ -67,15 +69,8 @@ async def average_check(session: AsyncSession, salon: Salon, now: datetime) -> D
     configured = salon.config.average_check_rub
     if configured is not None:
         return configured
-    value = await session.scalar(
-        select(func.avg(Booking.price)).where(
-            Booking.salon_id == salon.id,
-            Booking.price.is_not(None),
-            Booking.status != BookingStatus.CANCELLED,
-            Booking.starts_at >= now - timedelta(days=AVERAGE_CHECK_DAYS),
-        )
-    )
-    return Decimal(value) if value is not None else None
+    analytics = AnalyticsRepository(session, salon.id)
+    return await analytics.average_check(now - timedelta(days=AVERAGE_CHECK_DAYS), now, timezone=salon.timezone)
 
 
 async def weekly_report(session: AsyncSession, salon: Salon, now: datetime) -> WeeklyReport:
@@ -83,16 +78,10 @@ async def weekly_report(session: AsyncSession, salon: Salon, now: datetime) -> W
     today = now.astimezone(tz).date()
     end = datetime.combine(today - timedelta(days=today.weekday()), time(), tzinfo=tz)  # понедельник 00:00
     start = end - timedelta(days=7)
-    ai_bookings = await session.scalar(
-        select(func.count()).where(
-            Booking.salon_id == salon.id,
-            Booking.created_by_ai,
-            Booking.status != BookingStatus.CANCELLED,
-            Booking.created_at >= start,
-            Booking.created_at < end,
-        )
-    )
     config = salon.config
+    share = await AnalyticsRepository(session, salon.id).ai_share(
+        start, end, timezone=salon.timezone, work_start=config.work_start, work_end=config.work_end
+    )
     local_time = cast(func.timezone(salon.timezone, Message.created_at), Time)
     off_hours = or_(local_time < config.work_start, local_time >= config.work_end)
     answers, off_hours_answers, message_cost = (
@@ -121,7 +110,7 @@ async def weekly_report(session: AsyncSession, salon: Salon, now: datetime) -> W
     return WeeklyReport(
         salon_name=salon.name,
         first_day=start,
-        ai_bookings=int(ai_bookings or 0),
+        ai_bookings=share.ai_bookings,
         average_check_rub=await average_check(session, salon, now),
         answers=int(answers),
         off_hours_answers=int(off_hours_answers),
