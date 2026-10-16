@@ -10,11 +10,14 @@
   (одноразово, повтор — отзыв всей цепочки входа).
 - Keyset-пагинация по (время, id): курсор — непрозрачная строка с последней строкой страницы.
   OFFSET на длинной истории перебирал бы все пропущенные строки.
+- GET /admin/search — поиск по смыслу в сообщениях клиентов салона за период
+  («кто спрашивал про наращивание в сентябре»); даты — в часовом поясе салона, включительно.
 """
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
@@ -25,9 +28,11 @@ from beauty_agent.api.deps import SessionDep, client_ip, enforce
 from beauty_agent.api.pagination import decode_cursor, encode_cursor
 from beauty_agent.core.rate_limit import ADMIN_USER_LIMIT, TOKEN_IP_LIMIT
 from beauty_agent.core.security import AdminClaims, InvalidTokenError, RefreshTokens, Security
+from beauty_agent.db.models import Salon
 from beauty_agent.db.repositories.admins import AdminsRepository
 from beauty_agent.db.repositories.conversations import ConversationsRepository
 from beauty_agent.domain.enums import AdminRole, Channel, ConversationStatus, MessageRole
+from beauty_agent.rag.history_search import MAX_RESULTS, HistorySearch
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 _bearer = HTTPBearer(auto_error=False)
@@ -126,6 +131,48 @@ async def list_messages(
     items = [MessageOut(id=row.id, role=row.role, content=row.content, created_at=row.created_at) for row in rows]
     last = items[-1] if len(items) == limit else None
     return MessagesPage(items=items, next_cursor=encode_cursor(last.created_at, last.id) if last else None)
+
+
+class HistoryHitOut(BaseModel):
+    message_id: uuid.UUID
+    conversation_id: uuid.UUID
+    client_name: str | None
+    content: str
+    created_at: datetime
+    score: float
+
+
+@router.get("/search")
+async def search_history(
+    admin: AdminDep,
+    session: SessionDep,
+    request: Request,
+    q: Annotated[str, Query(min_length=2, max_length=200)],
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: Annotated[int, Query(ge=1, le=MAX_RESULTS)] = 20,
+) -> list[HistoryHitOut]:
+    salon = await session.get(Salon, admin.salon_id)
+    if salon is None:
+        raise _UNAUTHORIZED
+    tz = ZoneInfo(salon.timezone)
+    since = datetime.combine(date_from, time(0), tzinfo=tz) if date_from else None
+    until = datetime.combine(date_to + timedelta(days=1), time(0), tzinfo=tz) if date_to else None
+    if since and until and since >= until:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "date_from позже date_to")
+    search = HistorySearch(session, salon.id, request.app.state.conversations.embedder)
+    hits = await search.search(q, since=since, until=until, limit=limit)
+    return [
+        HistoryHitOut(
+            message_id=hit.message_id,
+            conversation_id=hit.conversation_id,
+            client_name=hit.client_name,
+            content=hit.content,
+            created_at=hit.created_at,
+            score=hit.score,
+        )
+        for hit in hits
+    ]
 
 
 # ---------------------------------------------------------------- токены

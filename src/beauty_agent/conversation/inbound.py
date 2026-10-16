@@ -47,6 +47,10 @@ class MessageQueue(Protocol):
         """Сообщение из REST API — ответ агента в воркере (workers/chat.py)."""
         ...
 
+    async def reindex_site(self, salon_id: uuid.UUID, job_id: uuid.UUID) -> None:
+        """Переиндексация сайта салона — фоновая задача с прогрессом (workers/indexing.py)."""
+        ...
+
 
 @dataclass
 class InboundGate:

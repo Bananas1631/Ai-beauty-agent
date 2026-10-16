@@ -4,6 +4,9 @@
   страницы в пределах того же сайта; не больше 30 страниц, с паузами, с уважением к robots.txt.
 - Страница, текст которой не изменился (тот же SHA-256), повторно не индексируется.
 - Обход — через безопасный клиент (rag/safe_http.py): внутренние адреса недоступны.
+- Каждая страница сохраняется своей транзакцией: транзакция не висит открытой, пока обходчик ждёт
+  следующую страницу, а повтор после сбоя продолжает с упавшей страницы — готовые не изменились
+  и пропускаются. Прогресс («обработано 12 из 30») уходит в колбэк — его показывает GET /jobs/{id}.
 """
 
 import asyncio
@@ -11,7 +14,7 @@ import hashlib
 import re
 import urllib.robotparser
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
 from urllib.parse import urljoin, urlsplit
@@ -46,6 +49,27 @@ class IngestReport:
     tokens: int = 0
     cost_rub: Decimal = Decimal(0)
     errors: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, int | str]:
+        return {
+            "pages_seen": self.pages_seen,
+            "pages_indexed": self.pages_indexed,
+            "pages_unchanged": self.pages_unchanged,
+            "pages_empty": self.pages_empty,
+            "chunks": self.chunks,
+            "tokens": self.tokens,
+            "cost_rub": str(self.cost_rub),
+        }
+
+
+@dataclass
+class Frontier:
+    """Сколько адресов ещё в очереди обхода — для оценки «из скольких» в прогрессе."""
+
+    pending: int = 0
+
+
+Progress = Callable[[int, int], Awaitable[None]]  # (обработано страниц, всего по оценке)
 
 
 async def index_document(
@@ -122,7 +146,12 @@ def _looks_like_page(url: str) -> bool:
 
 
 async def crawl(
-    client: httpx.AsyncClient, start_url: str, *, max_pages: int = MAX_PAGES, pause_s: float = PAUSE_S
+    client: httpx.AsyncClient,
+    start_url: str,
+    *,
+    max_pages: int = MAX_PAGES,
+    pause_s: float = PAUSE_S,
+    frontier: Frontier | None = None,
 ) -> AsyncIterator[Page]:
     start = str(check_url(start_url))
     robots = await _robots(client, start)
@@ -131,8 +160,10 @@ async def crawl(
         queue.insert(0, start)
     seen: set[str] = set()
     yielded = 0
+    frontier = frontier or Frontier()
     while queue and yielded < max_pages and len(seen) < max_pages * 3:
         url = queue.pop(0)
+        frontier.pending = len(queue)
         if url in seen or not _looks_like_page(url) or not robots.can_fetch(USER_AGENT, url):
             continue
         seen.add(url)
@@ -143,10 +174,11 @@ async def crawl(
             fetched = None
         if fetched is not None:
             yielded += 1
-            yield extract_page(fetched.url, fetched.text)
             for link in extract_links(fetched.url, fetched.text):
-                if same_site(start, link) and link not in seen:
+                if same_site(start, link) and link not in seen and link not in queue:
                     queue.append(link)
+            frontier.pending = len(queue)
+            yield extract_page(fetched.url, fetched.text)
         if pause_s:
             await asyncio.sleep(pause_s)  # вежливый обход: не нагружаем сайт салона
 
@@ -160,29 +192,33 @@ async def ingest_site(
     client: httpx.AsyncClient | None = None,
     max_pages: int = MAX_PAGES,
     pause_s: float = PAUSE_S,
+    on_progress: Progress | None = None,
 ) -> IngestReport:
     report = IngestReport()
     repo = KnowledgeRepository(session, salon_id)
     own_client = client is None
     http = client or make_safe_client()
+    frontier = Frontier()
     try:
-        async for page in crawl(http, start_url, max_pages=max_pages, pause_s=pause_s):
+        async for page in crawl(http, start_url, max_pages=max_pages, pause_s=pause_s, frontier=frontier):
             report.pages_seen += 1
-            if len(page.text) < MIN_PAGE_CHARS:
+            if len(page.text) >= MIN_PAGE_CHARS:
+                await index_document(
+                    session,
+                    repo,
+                    embedder,
+                    source=KnowledgeSource.WEBSITE,
+                    url=page.url,
+                    title=page.title,
+                    text=page.text,
+                    chunks=chunk_page(page),
+                    report=report,
+                )
+                await session.commit()
+            else:
                 report.pages_empty += 1
-                continue
-            await index_document(
-                session,
-                repo,
-                embedder,
-                source=KnowledgeSource.WEBSITE,
-                url=page.url,
-                title=page.title,
-                text=page.text,
-                chunks=chunk_page(page),
-                report=report,
-            )
-        await session.commit()
+            if on_progress is not None:
+                await on_progress(report.pages_seen, min(max_pages, report.pages_seen + frontier.pending))
     except BaseException:
         await session.rollback()
         raise

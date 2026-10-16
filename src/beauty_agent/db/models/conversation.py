@@ -5,12 +5,17 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import ForeignKey, Index, Numeric, String, Text, UniqueConstraint, func
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import ForeignKey, Index, Numeric, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from beauty_agent.db.base import Base, SalonOwned, Timestamps, UUIDPrimaryKey, str_enum
+from beauty_agent.db.models.knowledge import EMBEDDING_DIMENSIONS
 from beauty_agent.domain.enums import Channel, ConversationStatus, MessageRole, MessageStatus
+
+MESSAGE_EMBEDDED = text("embedding IS NOT NULL")
+MESSAGE_PENDING_EMBEDDING = text("role = 'client' AND embedding IS NULL")
 
 
 class Conversation(UUIDPrimaryKey, SalonOwned, Timestamps, Base):
@@ -47,6 +52,17 @@ class Message(UUIDPrimaryKey, SalonOwned, Timestamps, Base):
         UniqueConstraint("conversation_id", "external_id"),
         # история диалога по порядку и постранично
         Index(None, "conversation_id", "created_at"),
+        # поиск по истории для администратора (rag/history_search.py): только векторизованные
+        Index(
+            "ix_messages_embedding",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_where=MESSAGE_EMBEDDED,
+        ),
+        # очередь фоновой векторизации (workers/embeddings.py): свежие сообщения клиентов без вектора
+        Index("ix_messages_pending_embedding", "created_at", postgresql_where=MESSAGE_PENDING_EMBEDDING),
     )
 
     conversation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"))
@@ -64,6 +80,10 @@ class Message(UUIDPrimaryKey, SalonOwned, Timestamps, Base):
         ForeignKey("messages.id", ondelete="SET NULL"),
         index=True,
     )
+    # Вектор сообщения клиента для поиска по истории — только при согласии на обработку ПДн.
+    # deferred: обычное чтение переписки не тянет 1024 числа на сообщение
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIMENSIONS), deferred=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(32))
 
 
 class ToolCall(UUIDPrimaryKey, SalonOwned, Timestamps, Base):

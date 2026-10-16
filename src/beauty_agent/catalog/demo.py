@@ -3,15 +3,22 @@
 Демо делается для продажи — без участия салона: провайдер DEMO показывает реальные свободные слоты,
 а запись только имитирует. Страница помечена «Демо», закрыта от поисковиков и открывается
 по ссылке со случайной частью. Логика — здесь; scripts/make_demo.py и scripts/seed_demo.py — обёртки.
+
+Сайт салона сохраняется в его настройки (site_url). Индексация сайта — фоновая задача, если передан
+reindex (scripts/make_demo.py): медленный сайт больше не держит генератор, демо работает сразу
+по карточке филиала, а знания с сайта добавляются, пока владелец открывает ссылку.
+Без reindex сайт индексируется здесь же — для локального демо и тестов.
 """
 
 import secrets
 import time
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 import httpx
 import structlog
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from beauty_agent.adapters.crm.base import BookingProvider
@@ -19,6 +26,7 @@ from beauty_agent.catalog.importer import ImportReport, import_catalog
 from beauty_agent.db.repositories.salons import SalonsRepository
 from beauty_agent.domain.enums import CrmKind
 from beauty_agent.domain.errors import DomainError
+from beauty_agent.domain.salon_settings import SalonSettings
 from beauty_agent.rag.embeddings import EmbeddingsClient
 from beauty_agent.rag.ingest import IngestReport, ingest_site
 
@@ -48,13 +56,16 @@ class DemoReport:
     catalog: ImportReport | None = None
     site: IngestReport | None = None
     site_error: str | None = None
+    site_job: uuid.UUID | None = None  # индексация сайта идёт фоновой задачей
     timings_s: dict[str, float] = field(default_factory=dict)
 
     def lines(self) -> list[str]:
         result = [f"{stage}: {seconds:.1f} с" for stage, seconds in self.timings_s.items()]
         if self.catalog:
             result += self.catalog.lines()
-        if self.site:
+        if self.site_job:
+            result.append(f"Сайт индексируется в фоне: задача {self.site_job} (GET /api/v1/jobs/{self.site_job})")
+        elif self.site:
             result.append(f"Сайт: страниц {self.site.pages_indexed}, фрагментов {self.site.chunks}")
         elif self.site_error:
             result.append(f"Сайт не проиндексирован ({self.site_error}) — знания из карточки филиала")
@@ -62,6 +73,19 @@ class DemoReport:
             result.append("Сайта нет — знания из карточки филиала")
         result.append(f"Демо: {self.url}")
         return result
+
+
+def normalize_site_url(raw: str | None) -> str | None:
+    """«lavanda.ru» из карточки CRM → https://lavanda.ru; неверный адрес — None (демо работает без сайта)."""
+    if not raw or not raw.strip():
+        return None
+    value = raw.strip()
+    if not value.lower().startswith(("http://", "https://")):
+        value = f"https://{value}"
+    try:
+        return SalonSettings(site_url=value).site_url
+    except ValidationError:
+        return None
 
 
 async def _timed[T](report: DemoReport, stage: str, action: Callable[[], Awaitable[T]]) -> T:
@@ -85,6 +109,7 @@ async def make_demo(
     site_client: httpx.AsyncClient | None = None,
     max_pages: int = 30,
     pause_s: float = 0.5,
+    reindex: Callable[[uuid.UUID], Awaitable[uuid.UUID]] | None = None,
 ) -> DemoReport:
     report = DemoReport()
     info = await provider.get_salon_info()
@@ -102,11 +127,20 @@ async def make_demo(
     salon = await salons.get_by_slug(report.slug)
     if salon is None:  # импорт только что создал салон — его не может не быть
         raise RuntimeError("demo salon vanished")
-    salon.settings = {**(salon.settings or {}), "crm_kind": crm_kind.value}
+    raw_site = site_url or info.site_url
+    target = normalize_site_url(raw_site)
+    if raw_site and target is None:
+        report.site_error = "InvalidSiteUrl"
+    salon.settings = {
+        **(salon.settings or {}),
+        "crm_kind": crm_kind.value,
+        **({"site_url": target} if target else {}),
+    }
     await session.commit()
 
-    target = site_url or info.site_url
-    if target:
+    if target and reindex is not None:
+        report.site_job = await reindex(salon.id)
+    elif target:
         try:
             report.site = await _timed(
                 report,

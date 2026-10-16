@@ -24,6 +24,11 @@ class CeleryQueue:
 
         await asyncio.to_thread(chat_message_task.apply_async, args=[str(salon_id), str(message_id)])
 
+    async def reindex_site(self, salon_id: uuid.UUID, job_id: uuid.UUID) -> None:
+        from beauty_agent.workers.indexing import reindex_task
+
+        await asyncio.to_thread(reindex_task.apply_async, args=[str(salon_id), str(job_id)])
+
     async def sync_booking(self, salon_id: uuid.UUID, external_id: str) -> None:
         from beauty_agent.workers.reminders import sync_booking_task
 

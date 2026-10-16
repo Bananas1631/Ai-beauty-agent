@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from beauty_agent.domain.enums import CrmKind, ReplyMode
 
 _ORIGIN = re.compile(r"^https://[a-z0-9.-]+(:\d{1,5})?$")
+_SITE = re.compile(r"^https?://[\w.-]+(:\d{1,5})?(/\S*)?$", re.IGNORECASE)  # \w — и кириллические домены
 
 
 class PrivacyInfo(BaseModel):
@@ -44,6 +45,16 @@ class SalonSettings(BaseModel):
     work_start: time = time(10)
     work_end: time = time(21)
     privacy: PrivacyInfo | None = None
+    # Сайт для базы знаний (rag/ingest.py): переиндексация — POST /api/v1/salons/{id}/reindex.
+    # Внутренние адреса отсекаются при обходе (rag/safe_http.py), здесь — только формат
+    site_url: str | None = Field(None, max_length=2048)
+
+    @field_validator("site_url")
+    @classmethod
+    def _site(cls, value: str | None) -> str | None:
+        if value is not None and not _SITE.fullmatch(value):
+            raise ValueError(f"Сайт должен быть адресом http(s)://: {value}")
+        return value
 
     @field_validator("allowed_origins")
     @classmethod

@@ -132,6 +132,8 @@ class LLMSettings(EnvSection):
     # Кэш ответов на вопросы о салоне (agent/cache.py, ADR 011); семантический — эксперимент
     answer_cache: bool = True
     semantic_cache: bool = False
+    # Векторы сообщений клиентов с согласием — для поиска по истории (workers/embeddings.py)
+    history_embeddings: bool = True
 
 
 class YclientsSettings(EnvSection):

@@ -71,7 +71,13 @@ def configure(app: Celery, settings: Settings) -> None:
             ),
             Queue(DEAD_QUEUE, _DLX, routing_key=DEAD_QUEUE),
         ),
-        task_routes={"messages.*": {"queue": MESSAGES_QUEUE}, "periodic.*": {"queue": PERIODIC_QUEUE}},
+        # jobs.* — долгие задачи по запросу администратора (переиндексация): рядом с периодическими,
+        # чтобы не задерживать ответы клиентам в очереди messages
+        task_routes={
+            "messages.*": {"queue": MESSAGES_QUEUE},
+            "periodic.*": {"queue": PERIODIC_QUEUE},
+            "jobs.*": {"queue": PERIODIC_QUEUE},
+        },
         timezone="Europe/Moscow",
         enable_utc=True,
         worker_hijack_root_logger=False,  # логи — через наш structlog с маскированием ПДн
@@ -85,6 +91,7 @@ def configure(app: Celery, settings: Settings) -> None:
             "catalog-sync-nightly": {"task": "periodic.catalog_sync", "schedule": crontab(hour=4, minute=0)},
             "reminders": {"task": "periodic.reminders", "schedule": crontab(minute="*/5")},
             "outbox-sweep": {"task": "periodic.outbox_sweep", "schedule": crontab(minute="*")},
+            "embed-messages": {"task": "periodic.embed_messages", "schedule": crontab(minute="*")},
             "weekly-report": {"task": "periodic.weekly_report", "schedule": crontab(hour=10, minute=0, day_of_week=1)},
         },
     )
@@ -111,6 +118,8 @@ celery = Celery(
         "beauty_agent.workers.reminders",
         "beauty_agent.workers.catalog_sync",
         "beauty_agent.workers.reports",
+        "beauty_agent.workers.indexing",
+        "beauty_agent.workers.embeddings",
     ],
 )
 configure(celery, get_settings())
