@@ -29,6 +29,7 @@ import structlog
 from tenacity import AsyncRetrying, retry_if_exception, stop_after_attempt, wait_exponential_jitter
 from tenacity.wait import WaitBaseT
 
+from beauty_agent.core import metrics
 from beauty_agent.core.config import YclientsSettings
 from beauty_agent.core.resilience import CircuitBreaker, CircuitOpenError, RateLimiter, TokenBucket
 from beauty_agent.domain.entities import (
@@ -356,16 +357,23 @@ class YclientsProvider:
             response = await self._http.request(method, path, params=params, json=body, headers=self.headers())
         except httpx.TimeoutException as exc:
             self._breaker.record_failure()
+            metrics.provider_error("yclients", "timeout")
             raise YclientsTimeoutError("YCLIENTS не ответил вовремя") from exc
         except httpx.HTTPError as exc:
             self._breaker.record_failure()
+            metrics.provider_error("yclients", "unavailable")
             raise ProviderUnavailableError from exc
         if response.status_code == 429 or response.status_code >= 500:
             self._breaker.record_failure()
+            metrics.provider_error("yclients", "rate_limited" if response.status_code == 429 else "unavailable")
             logger.warning("yclients_unavailable", status=response.status_code, method=method)
             raise ProviderUnavailableError
         self._breaker.record_success()
-        return unwrap(response)
+        try:
+            return unwrap(response)
+        except ProviderAuthError:
+            metrics.provider_error("yclients", "auth")  # отозван токен — нужен человек, а не повтор
+            raise
 
     async def _retrying(
         self, method: str, path: str, *, params: dict[str, Any] | None = None, body: dict[str, Any] | None = None

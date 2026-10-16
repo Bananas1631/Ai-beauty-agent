@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 import structlog
 
 from beauty_agent.adapters.llm.base import ChatMessage, LLMClient, LLMResponse, ToolSpec
+from beauty_agent.core import metrics
 from beauty_agent.domain.errors import LLMUnavailableError
 
 logger = structlog.get_logger(__name__)
@@ -39,6 +40,7 @@ class LLMRouter:
             try:
                 return await client.complete(messages, tools, temperature=temperature, max_tokens=max_tokens)
             except LLMUnavailableError as exc:
+                metrics.provider_error(f"llm:{client.model_key}", "unavailable")
                 last_error = exc
                 logger.warning("llm_fallback", failed=client.model_key, next_index=index + 1, error=str(exc))
         raise LLMUnavailableError("Все модели недоступны") from last_error

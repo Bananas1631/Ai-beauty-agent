@@ -52,6 +52,14 @@ services:
   worker:
     <<: *app
     expose: []
+    environment:
+      APP_ENV: prod
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
+      # метрики дочерних процессов — в tmpfs, сводку отдаёт главный процесс на 9100 (только внутри сети)
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+      METRICS_PORT: "9100"
     command: ["celery", "-A", "beauty_agent.workers.celery_app", "worker", "-Q", "messages,periodic",
               "--concurrency", "4", "--loglevel", "INFO"]
     healthcheck:
@@ -116,6 +124,33 @@ services:
       retries: 10
       start_period: 30s
 
+  # Мониторинг. Наружу не открыт: Grafana — через SSH-туннель (ssh -L 3000:127.0.0.1:3000 сервер)
+  prometheus:
+    <<: *hardening
+    image: prom/prometheus:v3.1.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+
+  grafana:
+    <<: *hardening
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD не задан}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GRAFANA_ALERT_BOT_TOKEN: ${GRAFANA_ALERT_BOT_TOKEN:?GRAFANA_ALERT_BOT_TOKEN не задан}
+      GRAFANA_ALERT_CHAT_ID: ${GRAFANA_ALERT_CHAT_ID:?GRAFANA_ALERT_CHAT_ID не задан}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+
   caddy:
     <<: *hardening
     image: caddy:2-alpine
@@ -139,3 +174,5 @@ volumes:
   rabbitmqdata:
   caddy_data:
   caddy_config:
+  prometheusdata:
+  grafanadata:

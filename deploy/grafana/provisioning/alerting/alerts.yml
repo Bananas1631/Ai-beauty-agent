@@ -1,0 +1,170 @@
+# Алерты в Telegram: растут ошибки, очередь не разбирается, расход LLM у салона близок к лимиту.
+# Токен бота и чат — из окружения контейнера Grafana (GRAFANA_ALERT_BOT_TOKEN, GRAFANA_ALERT_CHAT_ID),
+# в файле их нет. Бот для алертов — отдельный, не админ-бот салонов.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: telegram
+    receivers:
+      - uid: telegram-alerts
+        type: telegram
+        settings:
+          bottoken: $GRAFANA_ALERT_BOT_TOKEN
+          chatid: $GRAFANA_ALERT_CHAT_ID
+          disable_web_page_preview: true
+
+policies:
+  - orgId: 1
+    receiver: telegram
+    group_by: ["alertname"]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+
+groups:
+  - orgId: 1
+    name: beauty-agent
+    folder: beauty-agent
+    interval: 1m
+    rules:
+      - uid: provider-errors
+        title: Растут ошибки внешних систем
+        condition: C
+        noDataState: OK  # нет рядов — нет ошибок
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "Ошибок YCLIENTS, LLM или мессенджеров больше 6 в минуту. Что делать — docs/runbook.md"
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: sum(rate(beauty_agent_provider_errors_total[5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{evaluator: {type: gt, params: [0.1]}}]
+
+      - uid: api-5xx
+        title: API отвечает ошибками 5xx
+        condition: C
+        noDataState: OK  # нет рядов — нет ошибок
+        execErrState: Error
+        for: 5m
+        annotations:
+          summary: "Больше 1 ответа 5xx в минуту — смотреть Sentry по trace_id"
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: sum(rate(beauty_agent_http_request_seconds_count{status=~"5.."}[5m])) or vector(0)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{evaluator: {type: gt, params: [0.0166]}}]
+
+      - uid: queue-stuck
+        title: Очередь сообщений не разбирается
+        condition: C
+        noDataState: OK  # нет рядов — нет ошибок
+        execErrState: Error
+        for: 10m
+        annotations:
+          summary: "В очереди messages больше 50 сообщений 10 минут или RabbitMQ недоступен (-1): клиенты ждут ответа"
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              # недоступный брокер (-1) — тоже авария: превращаем его в большое число
+              expr: max(beauty_agent_queue_messages{queue="messages"} > 50 or (beauty_agent_queue_messages{queue="messages"} < 0) * -1000)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{evaluator: {type: gt, params: [50]}}]
+
+      - uid: dead-letters
+        title: Сообщения клиентов в очереди «мёртвых» задач
+        condition: C
+        noDataState: OK  # нет рядов — нет ошибок
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: "Задачи не обработались после всех повторов — разобрать очередь dead (docs/runbook.md)"
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: max(beauty_agent_queue_messages{queue="dead"})
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{evaluator: {type: gt, params: [0]}}]
+
+      - uid: llm-budget
+        title: Расход LLM у салона близок к дневному лимиту
+        condition: C
+        noDataState: OK  # нет рядов — нет ошибок
+        execErrState: Error
+        for: 0s
+        annotations:
+          summary: "Салон {{ $labels.salon_id }} потратил больше 80% дневного лимита на LLM"
+        labels:
+          severity: info
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: max by (salon_id) (beauty_agent_llm_budget_used_ratio)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{evaluator: {type: gt, params: [0.8]}}]

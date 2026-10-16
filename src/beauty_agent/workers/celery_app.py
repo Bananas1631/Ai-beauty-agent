@@ -5,19 +5,34 @@
   без возврата в очередь и по DLX попадает в очередь «мёртвых» задач, администратор получает уведомление.
 - Async-код в синхронном Celery: у каждого процесса воркера свой постоянный цикл событий и свой
   Runtime (движок БД, Redis, HTTP). Движок asyncpg нельзя переиспользовать между разными asyncio.run.
+- trace_id запроса API уходит в заголовке задачи: в логах и Sentry воркера — тот же ID, что у вебхука.
+- Метрики: дочерние процессы пишут в PROMETHEUS_MULTIPROC_DIR, главный отдаёт сводку на METRICS_PORT.
 """
 
 import asyncio
+import os
+import uuid
 from collections.abc import Coroutine
 from typing import Any
 
+import sentry_sdk
+import structlog
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import worker_init, worker_process_init, worker_process_shutdown
+from celery.signals import (
+    before_task_publish,
+    task_postrun,
+    task_prerun,
+    worker_init,
+    worker_process_init,
+    worker_process_shutdown,
+)
 from kombu import Exchange, Queue
 
 from beauty_agent.core.config import Settings, get_settings
 from beauty_agent.core.logging import configure_logging
+from beauty_agent.core.metrics import serve_worker_metrics
+from beauty_agent.core.sentry import init_sentry
 
 MESSAGES_QUEUE = "messages"
 PERIODIC_QUEUE = "periodic"
@@ -100,11 +115,38 @@ celery = Celery(
 configure(celery, get_settings())
 
 
+TRACE_HEADER = "trace_id"
+
+
 @worker_init.connect
 def _declare_on_start(sender: Any = None, **_: Any) -> None:
     app = getattr(sender, "app", None)
     if app is not None:
         declare_queues(app)
+    port = os.environ.get("METRICS_PORT")
+    if port and port.isdigit():
+        serve_worker_metrics(int(port))
+
+
+@before_task_publish.connect
+def _attach_trace_id(headers: dict[str, Any] | None = None, **_: Any) -> None:
+    """Задача, поставленная из вебхука, несёт trace_id этого запроса."""
+    trace_id = structlog.contextvars.get_contextvars().get("trace_id")
+    if headers is not None and trace_id and TRACE_HEADER not in headers:
+        headers[TRACE_HEADER] = trace_id
+
+
+@task_prerun.connect
+def _bind_trace_id(task: Any = None, **_: Any) -> None:
+    trace_id = getattr(getattr(task, "request", None), TRACE_HEADER, None) or uuid.uuid4().hex
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(trace_id=str(trace_id), task=getattr(task, "name", None))
+    sentry_sdk.set_tag("trace_id", str(trace_id))
+
+
+@task_postrun.connect
+def _unbind_trace_id(**_: Any) -> None:
+    structlog.contextvars.clear_contextvars()
 
 
 _loop: asyncio.AbstractEventLoop | None = None
@@ -120,6 +162,7 @@ def runtime() -> Any:
 
         settings = get_settings()
         configure_logging(settings.app.log_level, json_logs=settings.app.log_json)
+        init_sentry(settings.sentry)  # интеграция Celery включается сама: ошибки задач с trace_id
         _loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_loop)
         _runtime = create_runtime(settings, queue=CeleryQueue())

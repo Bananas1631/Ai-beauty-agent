@@ -28,6 +28,11 @@ services:
   worker:
     <<: *app
     ports: []
+    environment:
+      <<: *app-env
+      # метрики дочерних процессов — в общую папку, сводку отдаёт главный процесс на 9100
+      PROMETHEUS_MULTIPROC_DIR: /tmp/prometheus
+      METRICS_PORT: "9100"
     command: ["celery", "-A", "beauty_agent.workers.celery_app", "worker", "-Q", "messages,periodic",
               "--concurrency", "2", "--loglevel", "INFO"]
     healthcheck:
@@ -51,6 +56,35 @@ services:
     command: ["python", "-m", "beauty_agent.workers.telegram_polling"]
     healthcheck:
       disable: true
+
+  # Мониторинг: docker compose -f deploy/docker-compose.yml --profile monitoring up -d
+  # Grafana — http://localhost:3000 (admin / пароль из GRAFANA_ADMIN_PASSWORD)
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    profiles: ["monitoring"]
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheusdata:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: ["monitoring"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GRAFANA_ALERT_BOT_TOKEN: ${GRAFANA_ALERT_BOT_TOKEN:-}
+      GRAFANA_ALERT_CHAT_ID: ${GRAFANA_ALERT_CHAT_ID:-}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
 
   postgres:
     image: pgvector/pgvector:pg17
@@ -106,3 +140,5 @@ volumes:
   pgdata:
   redisdata:
   rabbitmqdata:
+  prometheusdata:
+  grafanadata:

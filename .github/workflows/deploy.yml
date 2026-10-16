@@ -91,7 +91,10 @@ jobs:
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USER: ${{ secrets.DEPLOY_USER }}
-        run: scp deploy/docker-compose.prod.yml deploy/Caddyfile deploy/backup.sh "$USER@$HOST:/opt/beauty-agent/"
+        run: |
+          scp deploy/docker-compose.prod.yml deploy/Caddyfile deploy/backup.sh "$USER@$HOST:/opt/beauty-agent/"
+          # конфигурация мониторинга: Prometheus, дашборды и алерты Grafana
+          scp -r deploy/prometheus deploy/grafana "$USER@$HOST:/opt/beauty-agent/"
       - name: Pull, migrate, restart, wait for /ready
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}

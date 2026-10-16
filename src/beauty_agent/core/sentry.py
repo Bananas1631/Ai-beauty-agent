@@ -10,6 +10,7 @@
 from typing import Any
 
 import sentry_sdk
+import structlog
 
 from beauty_agent import __version__
 from beauty_agent.core.config import SentrySettings
@@ -20,7 +21,13 @@ _DROP_HEADERS = {"authorization", "cookie", "x-telegram-bot-api-secret-token"}
 
 
 def scrub_event(event: Any, _hint: Any = None) -> Any:
-    """Очистка события перед отправкой: ПДн маскируются, тело и секреты запроса удаляются."""
+    """Очистка события перед отправкой: ПДн маскируются, тело и секреты запроса удаляются.
+
+    trace_id из контекста логов — в теги: по нему событие Sentry находится в логах API и воркера.
+    """
+    trace_id = structlog.contextvars.get_contextvars().get("trace_id")
+    if trace_id:
+        event.setdefault("tags", {})["trace_id"] = trace_id
     request = event.get("request")
     if isinstance(request, dict):
         for name in _DROP_REQUEST_FIELDS:

@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from beauty_agent.adapters.channels.base import ChannelRejectedError, ChannelSender, Delivery
+from beauty_agent.core import metrics
 from beauty_agent.core.security import Security
 from beauty_agent.db.models import ChannelAccount, OutboundMessage
 from beauty_agent.domain.enums import Channel, OutboxStatus
@@ -126,10 +127,12 @@ class Outbox:
         try:
             external_id = await sender.send(credentials, Delivery(row.chat_id, row.text, row.route, dedupe_key))
         except ChannelRejectedError as exc:
+            metrics.provider_error(row.channel.value, "rejected")
             logger.warning("outbound_rejected", channel=row.channel.value, error=exc.message)
             await self._finish(row.id, status=OutboxStatus.FAILED, error=exc.message[:500], locked_until=None)
             return DeliveryStatus.FAILED
         except Exception:
+            metrics.provider_error(row.channel.value, "unavailable")
             # Сеть или лимит мессенджера: вернуть строку в очередь, задачу повторит Celery
             await self._finish(row.id, status=OutboxStatus.PENDING, locked_until=None)
             raise

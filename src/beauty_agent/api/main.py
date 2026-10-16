@@ -13,12 +13,13 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from beauty_agent import __version__
-from beauty_agent.api import health, pages, v1, widget_ws
+from beauty_agent.api import health, metrics, pages, v1, widget_ws
 from beauty_agent.api.errors import install_error_handlers
 from beauty_agent.api.middleware import TraceIdMiddleware
 from beauty_agent.api.security import SecurityHeadersMiddleware
 from beauty_agent.core.config import Settings, get_settings
 from beauty_agent.core.logging import configure_logging
+from beauty_agent.core.metrics import MetricsMiddleware
 from beauty_agent.core.sentry import init_sentry
 from beauty_agent.runtime import create_runtime
 
@@ -60,9 +61,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
 
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(MetricsMiddleware)
     app.add_middleware(TraceIdMiddleware)
     install_error_handlers(app)
     app.include_router(health.router)
+    app.include_router(metrics.router)
     app.include_router(v1.router)
     app.include_router(pages.router)
     app.include_router(widget_ws.router)

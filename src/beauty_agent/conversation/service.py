@@ -38,6 +38,7 @@ from beauty_agent.conversation.handoff import hand_off
 from beauty_agent.conversation.notifications import AdminEvent, AdminEventKind, Notifier
 from beauty_agent.conversation.outbox import enqueue_outbound, outbox_key
 from beauty_agent.conversation.privacy import PrivacyService
+from beauty_agent.core import metrics
 from beauty_agent.core.redis import RedisLock, key
 from beauty_agent.core.tracing import NoopTracer, Tracer
 from beauty_agent.db.models import Salon
@@ -157,8 +158,11 @@ class ConversationService:
             self.lock.hold(lock_name, ttl_s=LOCK_TTL_S, wait_s=LOCK_WAIT_S),
             self.session_factory() as session,
         ):
-            reply = await self._handle(session, message)
-            await session.commit()
+            with metrics.reply_timer(message.channel.value):
+                reply = await self._handle(session, message)
+                await session.commit()
+        if reply.result is not None:
+            metrics.llm_cost(str(salon.id), reply.result.cost_rub)
         return reply
 
     @staticmethod
