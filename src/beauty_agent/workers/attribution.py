@@ -58,6 +58,7 @@ async def attribute_visits(session_factory: async_sessionmaker[AsyncSession], *,
                     price=booking.price,
                     status=booking.status,
                     billing_month=f"{local:%Y-%m}",
+                    conversation_id=booking.conversation_id,
                 ),
             )
             if await record_event(session, event, dedupe_key=f"booking.attributed:{booking.id}"):

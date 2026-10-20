@@ -32,7 +32,11 @@ dependencies = [
     "pyjwt (>=2.15.1,<3.0.0)",
     "prometheus-client (>=0.21,<0.22)",
     "pillow (>=12,<13)",
-    "aiokafka (>=0.14.0,<0.15.0)"
+    "aiokafka (>=0.14.0,<0.15.0)",
+    "argon2-cffi (>=25.1.0,<26.0.0)",
+    "clickhouse-connect (>=0.9,<1.0)",
+    "pandas (>=2.3,<3.0)",
+    "openpyxl (>=3.1.5,<4.0)"
 ]
 
 
@@ -48,7 +52,7 @@ dev = [
     "pytest (>=9.1.1,<10.0.0)",
     "pytest-asyncio (>=1.4.0,<2.0.0)",
     "pytest-cov (>=7.1.0,<8.0.0)",
-    "testcontainers[postgres,redis,rabbitmq] (>=4.15.0,<5.0.0)",
+    "testcontainers[postgres,redis,rabbitmq,clickhouse,kafka] (>=4.15.0,<5.0.0)",
     "ruff (>=0.16.9,<0.17.0)",
     "mypy (>=2.3.1,<3.0.0)",
     "pre-commit (>=4.6.2,<5.0.0)",
@@ -58,14 +62,16 @@ dev = [
     "fakeredis[lua] (>=2.40.0,<3.0.0)",
     "httpx-ws (>=0.9.0,<0.10.0)",
     "locust (>=2.46.7,<3.0.0)",
-    "websocket-client (>=1.9.2,<2.0.0)"
+    "websocket-client (>=1.9.2,<2.0.0)",
+    "pandas-stubs (>=2.3,<2.4)",
+    "types-openpyxl (>=3.1)"
 ]
 
 # ---------------------------------------------------------------- ruff
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-src = ["src", "tests"]
+src = ["src", "tests", "services/indexer"]
 
 [tool.ruff.lint]
 select = [
@@ -83,35 +89,38 @@ select = [
 ignore = ["RUF001", "RUF002", "RUF003"]  # кириллица в строках и комментариях — не ошибка
 
 [tool.ruff.lint.isort]
-known-first-party = ["beauty_agent", "scripts", "evals"]
+known-first-party = ["beauty_agent", "beauty_indexer", "scripts", "evals"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106"]  # assert в тестах — норма
+"services/*/beauty_*/tests/**" = ["S101", "S105", "S106"]
 
 # ---------------------------------------------------------------- mypy
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests", "scripts", "evals"]
-mypy_path = "src,."
+files = ["src", "tests", "scripts", "evals", "services/indexer"]
+mypy_path = "src,.,services/indexer"
 explicit_package_bases = true
 plugins = ["pydantic.mypy"]
 
 # ---------------------------------------------------------------- pytest
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-# корень проекта в sys.path: тесты импортируют консольные команды из scripts/
-pythonpath = ["."]
+testpaths = ["tests", "services/indexer/beauty_indexer/tests"]
+# корень проекта в sys.path: тесты импортируют консольные команды из scripts/; индексатор — свой пакет
+pythonpath = [".", "services/indexer"]
 addopts = ["-ra", "--strict-markers"]
+# clickhouse-connect предупреждает о будущем нативном async-клиенте — к нашему коду не относится
+filterwarnings = ["ignore:The current async client is a thread-pool wrapper:FutureWarning"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
 # ---------------------------------------------------------------- coverage
 [tool.coverage.run]
-source = ["beauty_agent"]
+source = ["beauty_agent", "beauty_indexer"]
 branch = true
 # миграции проверяет отдельный тест: применить, откатить, применить снова
-omit = ["*/db/migrations/*"]
+omit = ["*/db/migrations/*", "*/beauty_indexer/migrations/*", "*/beauty_indexer/tests/*"]
 
 [tool.coverage.report]
 fail_under = 80
@@ -119,7 +128,7 @@ show_missing = true
 
 # У Celery и kombu нет аннотаций типов: импорт без проверки, декораторы задач — без требования типов
 [[tool.mypy.overrides]]
-module = ["celery", "celery.*", "kombu", "kombu.*", "aiokafka", "aiokafka.*"]
+module = ["celery", "celery.*", "kombu", "kombu.*", "aiokafka", "aiokafka.*", "clickhouse_connect", "clickhouse_connect.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

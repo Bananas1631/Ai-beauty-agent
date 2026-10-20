@@ -28,6 +28,7 @@
 | `beauty.bookings` | salon_id | 6 | 7 дней | booking.created, booking.rescheduled, booking.cancelled, booking.attributed |
 | `beauty.messages` | salon_id | 6 | 7 дней | message.received |
 | `beauty.llm` | salon_id | 6 | 7 дней | llm.call.finished |
+| `beauty.knowledge` | salon_id | 6 | 7 дней | site.reindex.requested, knowledge.updated — обмен с индексатором (ADR 014) |
 | `<топик>.dlq` | как в исходном | 6 | 7 дней | события, которые потребитель не смог обработать за 3 попытки, и сообщения не по схеме; причина — в заголовках `dlq_reason`, `dlq_group`, `dlq_source` |
 
 Топики создаёт relay при старте (`events/producer.py: ensure_topics`); автосоздание в брокере выключено.
@@ -42,12 +43,18 @@
 | `booking.attributed` | 1 | `workers/attribution.py` (каждые 15 минут) | визит наступил, запись засчитана ИИ по правилу `domain/billing.py`; одно событие на запись | booking_id, starts_at, price, status, billing_month | weekly-stats (attributed_visits); биллинг на Kotlin (шаг 29) |
 | `message.received` | 1 | `ConversationService` (accept, handle) | сообщение клиента сохранено | message_id, conversation_id, client_id, channel | weekly-stats (messages_received) |
 | `llm.call.finished` | 1 | `ConversationService` | ход агента закончен, ответ сохранён | conversation_id, model (null — ответ без модели: кэш, guardrail), prompt_version, prompt/completion_tokens, cost_rub, latency_ms, tool_calls, cache_hit, handed_off, guardrail | weekly-stats (answers, off_hours_answers, llm_cost_rub); ClickHouse |
+| `site.reindex.requested` | 1 | `EventReindexQueue` (основной сервис, `KNOWLEDGE_BACKEND=indexer` или `shadow`) | администратор или партнёр запустил переиндексацию сайта | site_url (публичный адрес сайта салона), job_id (задача JobStore — null в теневом режиме), max_pages | indexer (`services/indexer`): задача обхода в `knowledge.reindex_jobs` |
+| `knowledge.updated` | 1 | индексатор, `JobRunner` | обход закончен (или не удался) | status (done/failed), version, job_id, pages_seen/indexed/unchanged, chunks, error | knowledge-sync: версия сайта в Redis (ключ кэша ответов) и статус задачи в JobStore |
 
 ## Группы потребителей
 
 | Группа | Код | Топики | Что делает |
 | --- | --- | --- | --- |
-| `weekly-stats` | `events/handlers/reports.py` | все три | копит `salon_week_stats`; еженедельный отчёт берёт цифры оттуда при `KAFKA_ENABLED=true` |
+| `weekly-stats` | `events/handlers/reports.py` | bookings, messages, llm | копит `salon_week_stats`; еженедельный отчёт берёт цифры оттуда при `KAFKA_ENABLED=true` |
+| `knowledge-sync` | `events/handlers/knowledge.py` | knowledge | knowledge.updated → версия сайта в Redis и завершение задачи переиндексации |
+| `partner-webhooks` | `events/handlers/webhooks.py` | bookings | booking.created/rescheduled/cancelled → подписанный Ed25519 вебхук партнёрам салона (`oauth_clients.webhook_url`) |
+| `indexer` | `services/indexer/beauty_indexer/jobs.py` | knowledge | site.reindex.requested → задача обхода; своя таблица `knowledge.processed_events` |
+| `clickhouse` | `deploy/clickhouse/init.sql` (движок Kafka в ClickHouse, без Python) | bookings, messages, llm | все события → `analytics.events` (ReplacingMergeTree по event_id: дубли схлопываются, отчёты о деньгах — с FINAL); новая группа читает с начала хранения — так заливается история |
 
 Новый потребитель — обработчик в `events/handlers/` и строка в `events/consumers.py`;
 запуск `python -m beauty_agent.events.consumers <группа>`, несколько экземпляров делят партиции.

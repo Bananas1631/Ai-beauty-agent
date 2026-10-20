@@ -114,8 +114,9 @@ services:
       kafka:
         condition: service_healthy
 
-  # Потребители событий: группа weekly-stats копит статистику для еженедельных отчётов.
-  # Отчёт переключается на неё (KAFKA_ENABLED=true в .env) после первой полной недели статистики
+  # Потребители событий: weekly-stats копит статистику для еженедельных отчётов (отчёт переключается
+  # на неё — KAFKA_ENABLED=true в .env — после первой полной недели), knowledge-sync принимает
+  # результат индексатора, partner-webhooks рассылает подписанные вебхуки партнёрам
   consumers:
     <<: *app
     expose: []
@@ -128,12 +129,66 @@ services:
       METRICS_PORT: "9102"
       POSTGRES_POOL_SIZE: "2"
       POSTGRES_MAX_OVERFLOW: "1"
-    command: ["python", "-m", "beauty_agent.events.consumers", "weekly-stats"]
+    command: ["python", "-m", "beauty_agent.events.consumers", "weekly-stats", "knowledge-sync", "partner-webhooks"]
     stop_grace_period: 20s
     deploy:
       resources:
         limits:
           memory: 256m
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  # Индексатор сайтов (ADR 014): свой образ, схема knowledge в том же PostgreSQL. Включается для
+  # агента переменной KNOWLEDGE_BACKEND (shadow → indexer); образ — INDEXER_IMAGE в .env
+  indexer:
+    <<: *hardening
+    image: "${INDEXER_IMAGE:-ghcr.io/bananas1631/ai-beauty-agent-indexer:latest}"
+    env_file: .env
+    environment: &indexer-env
+      APP_ENV: prod
+      POSTGRES_HOST: postgres
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      INDEXER_JWKS_URL: http://api:8000/.well-known/jwks.json
+      POSTGRES_POOL_SIZE: "3"
+      POSTGRES_MAX_OVERFLOW: "2"
+    expose:
+      - "8001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  indexer-worker:
+    <<: *hardening
+    image: "${INDEXER_IMAGE:-ghcr.io/bananas1631/ai-beauty-agent-indexer:latest}"
+    env_file: .env
+    environment:
+      <<: *indexer-env
+      METRICS_PORT: "9103"
+    command: ["python", "-m", "beauty_indexer.worker"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 384m
     healthcheck:
       disable: true
     depends_on:

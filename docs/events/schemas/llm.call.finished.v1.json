@@ -58,6 +58,12 @@
           "default": null,
           "title": "Model"
         },
+        "offers_shown": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Offers Shown",
+          "type": "integer"
+        },
         "prompt_tokens": {
           "minimum": 0,
           "title": "Prompt Tokens",

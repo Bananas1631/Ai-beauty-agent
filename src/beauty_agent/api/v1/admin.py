@@ -15,12 +15,12 @@
 """
 
 import uuid
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -33,6 +33,7 @@ from beauty_agent.db.repositories.admins import AdminsRepository
 from beauty_agent.db.repositories.conversations import ConversationsRepository
 from beauty_agent.domain.enums import AdminRole, Channel, ConversationStatus, MessageRole
 from beauty_agent.rag.history_search import MAX_RESULTS, HistorySearch
+from beauty_agent.reports.excel import XLSX, collect_invoice, invoice_filename, invoice_workbook
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 _bearer = HTTPBearer(auto_error=False)
@@ -243,3 +244,25 @@ async def remove_member(
     if not await AdminsRepository(session).deactivate(owner.salon_id, telegram_user_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Администратор не найден")
     await session.commit()
+
+
+@router.get(
+    "/invoice.xlsx",
+    response_class=Response,
+    responses={200: {"content": {XLSX: {}}, "description": "Выгрузка для счёта за месяц"}},
+)
+async def invoice_xlsx(
+    owner: OwnerDep,
+    session: SessionDep,
+    month: Annotated[str, Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="месяц визитов, ГГГГ-ММ")],
+) -> Response:
+    """Выгрузка для счёта по тарифу «Результат» в Excel — только владельцу салона (деньги салона)."""
+    salon = await session.get(Salon, owner.salon_id)
+    if salon is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Салон не найден")
+    data = await collect_invoice(session, salon, month, now=datetime.now(UTC))
+    return Response(
+        invoice_workbook(data),
+        media_type=XLSX,
+        headers={"Content-Disposition": f'attachment; filename="{invoice_filename(salon, month)}"'},
+    )

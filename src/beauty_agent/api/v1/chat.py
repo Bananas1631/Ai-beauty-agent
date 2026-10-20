@@ -5,7 +5,8 @@
 - GET /api/v1/chat/messages/{id} — статус (в очереди, обрабатывается, готово, ошибка) и ответ агента;
   статус хранится в строке сообщения в PostgreSQL, а не в result backend Celery.
 - WebSocket /api/v1/chat/ws?client_id=… — готовые ответы без опроса (Redis Pub/Sub).
-- Доступ — по ключу API салона в заголовке X-API-Key (в БД только хеш); салон берётся из ключа.
+- Доступ — по ключу API салона в заголовке X-API-Key (в БД только хеш) или по токену OAuth2 со
+  scope chat:write (api/partner.py); салон берётся из ключа или токена.
 - Повторный POST с тем же Idempotency-Key не создаёт второе сообщение и не ставит вторую задачу.
 """
 
@@ -14,11 +15,12 @@ import uuid
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, WebSocket, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, WebSocket, status
 from fastapi.websockets import WebSocketDisconnect
 from pydantic import ValidationError
 
-from beauty_agent.api.deps import SessionDep, enforce
+from beauty_agent.api.deps import SessionDep
+from beauty_agent.api.partner import ChatWriter
 from beauty_agent.api.v1.schemas.chat import (
     ChatAccepted,
     ChatMessageIn,
@@ -29,16 +31,17 @@ from beauty_agent.api.v1.schemas.chat import (
 from beauty_agent.conversation.notifier import ChatEvents
 from beauty_agent.conversation.service import ConversationService, IncomingMessage
 from beauty_agent.core.rate_limit import API_KEY_LIMIT, RateLimiter
+from beauty_agent.core.security import API_AUDIENCE, Security
 from beauty_agent.db.models import Salon
 from beauty_agent.db.repositories.api_keys import ApiKeysRepository
 from beauty_agent.db.repositories.conversations import ConversationsRepository
 from beauty_agent.domain.enums import Channel, MessageRole, MessageStatus
+from beauty_agent.domain.errors import DomainError
 from beauty_agent.runtime import Runtime
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-_UNAUTHORIZED = HTTPException(status.HTTP_401_UNAUTHORIZED, "Нужен ключ API салона в заголовке X-API-Key")
 IdempotencyKey = Annotated[
     str | None,
     Header(
@@ -49,23 +52,7 @@ IdempotencyKey = Annotated[
 ]
 
 
-async def api_salon(
-    request: Request,
-    session: SessionDep,
-    api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
-) -> Salon:
-    if not api_key:
-        raise _UNAUTHORIZED
-    found = await ApiKeysRepository(session).authenticate(api_key)
-    if found is None:
-        raise _UNAUTHORIZED
-    key, salon = found
-    await enforce(request, API_KEY_LIMIT, str(key.id))
-    structlog.contextvars.bind_contextvars(salon_id=str(salon.id))
-    return salon
-
-
-ApiSalon = Annotated[Salon, Depends(api_salon)]
+ApiSalon = ChatWriter  # ключ API или токен со scope chat:write
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED, response_model=ChatAccepted)
@@ -109,20 +96,17 @@ async def get_message(message_id: uuid.UUID, salon: ApiSalon, session: SessionDe
 
 @router.websocket("/ws")
 async def chat_events(websocket: WebSocket, client_id: Annotated[str, Query(max_length=128)]) -> None:
-    """Готовые ответы клиенту client_id. Ключ — в заголовке X-API-Key (интеграции, а не браузер)."""
+    """Готовые ответы клиенту client_id. Ключ — в заголовке X-API-Key или токен chat:write в Authorization."""
     app = websocket.app
     try:
         valid_client = ChatMessageIn.model_validate({"client_id": client_id, "text": "-"}).client_id
     except ValidationError:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
-    api_key = websocket.headers.get("x-api-key") or ""
-    async with app.state.session_factory() as session:
-        found = await ApiKeysRepository(session).authenticate(api_key) if api_key else None
-    if found is None or not await RateLimiter(app.state.redis).hit(API_KEY_LIMIT, str(found[0].id)):
+    salon = await _websocket_salon(websocket)
+    if salon is None:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
-    salon = found[1]
     await websocket.accept()
     events = ChatEvents(app.state.redis)
     async with events.subscribe(salon.id, valid_client) as pubsub:
@@ -146,4 +130,32 @@ async def chat_events(websocket: WebSocket, client_id: Annotated[str, Query(max_
                 logger.warning("chat_ws_failed", error=type(error).__name__)
 
 
-__all__ = ["ApiSalon", "ClientId", "api_salon", "router"]
+async def _websocket_salon(websocket: WebSocket) -> Salon | None:
+    """Салон по ключу API или токену chat:write; None — нет доступа или исчерпан лимит."""
+    app = websocket.app
+    api_key = websocket.headers.get("x-api-key") or ""
+    authorization = websocket.headers.get("authorization") or ""
+    async with app.state.session_factory() as session:
+        if api_key:
+            found = await ApiKeysRepository(session).authenticate(api_key)
+            if found is None:
+                return None
+            subject, salon = str(found[0].id), found[1]
+        elif authorization.lower().startswith("bearer "):
+            security: Security = app.state.security
+            try:
+                claims = security.verify_access_token(authorization[7:], audience=API_AUDIENCE, scope="chat:write")
+            except DomainError:
+                return None
+            found_salon = await session.get(Salon, claims.salon_id) if claims.salon_id else None
+            if found_salon is None:
+                return None
+            subject, salon = f"oauth:{claims.subject}", found_salon
+        else:
+            return None
+    if not await RateLimiter(app.state.redis).hit(API_KEY_LIMIT, subject):
+        return None
+    return salon
+
+
+__all__ = ["ApiSalon", "ClientId", "router"]

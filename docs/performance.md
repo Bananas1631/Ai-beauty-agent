@@ -195,3 +195,57 @@ APP_SIMULATED_LATENCY_MS=1500 APP_PUBLIC_URL=http://127.0.0.1:8811 \
 LOAD_SALONS=load_salons.json poetry run locust -f tests/load/locustfile.py --headless \
   -u 120 -r 10 -t 4m --stop-timeout 5 --host http://127.0.0.1:8811 --csv load
 ```
+
+## PostgreSQL против ClickHouse: 10 млн событий (30 декабря 2026)
+
+Зачем: еженедельный отчёт, расходы на LLM и воронка записи — агрегаты по событиям всех салонов.
+В PostgreSQL они читают строки целиком; в ClickHouse — только нужные колонки, сжатые по колонкам.
+
+### Данные и стенд
+
+- Генератор: [`scripts/generate_events.py`](../scripts/generate_events.py) — 10 000 000 событий
+  за ноябрь 2026, 500 салонов; 60% — ответы агента (llm.call.finished), остальное — сообщения,
+  записи и визиты. Строки генерируют сами базы (`generate_series` и `numbers`) по одной формуле,
+  данные в обеих одинаковые. Таблицы отдельные (`bench.events`, `analytics.events_bench`).
+- PostgreSQL 17: индекс `(salon_id, event_type, ts)` — тот же порядок, что ключ сортировки
+  ClickHouse; `VACUUM ANALYZE` после заливки. ClickHouse 25.3: MergeTree, `OPTIMIZE … FINAL`.
+- Docker Desktop, 12 ядер, 8 ГБ памяти у VM; настройки баз по умолчанию. Данные PostgreSQL —
+  в tmpfs (на диске C: стенда мало места): это лучший случай для PostgreSQL — нет чтения с диска.
+  Лимиты памяти контейнеров: PostgreSQL 4,5 ГБ, ClickHouse 2 ГБ.
+- Время — медиана 5 запусков после прогрева; размер — таблица с индексами (PostgreSQL) и активные
+  части (ClickHouse). Запросы — с параметрами, как в `analytics/queries.py`.
+
+### Результат
+
+| | PostgreSQL 17 | ClickHouse 25.3 | Разница |
+| --- | --- | --- | --- |
+| Заливка 10 млн (генерация в базе) | 31,9 с | 8,6 с | в 3,7 раза |
+| На диске | 1,5 ГБ | 131 МБ | в 12 раз |
+| Расход на LLM по салонам и моделям за месяц (вся таблица) | 744 мс | 68 мс | в 11 раз |
+| p95 задержки по дням, один салон | 60 мс | 6 мс | в 10 раз |
+| События по типам, один салон за месяц | 6 мс | 6 мс | одинаково |
+
+### Выводы
+
+- **Агрегаты по многим строкам** (расходы всех салонов, квантили) — ClickHouse в 10–11 раз
+  быстрее даже против PostgreSQL в памяти: читает 2–3 колонки из 20, сжатые в 12 раз.
+- **Точечный запрос по индексу** (один салон, один месяц, подсчёт) — PostgreSQL не уступает:
+  индекс `(salon_id, event_type, ts)` отдаёт нужный диапазон сразу. Для отчёта одного салона
+  ClickHouse не нужен; он нужен для аналитики по всем салонам и истории за годы.
+- **Объём**: 10 млн событий — ~1,5 ГБ в PostgreSQL против ~130 МБ в ClickHouse. При сотнях салонов
+  и двух годах хранения (TTL в `analytics.events`) разница — десятки гигабайт на диске сервера.
+- Поэтому: источник правды для записей и счёта — PostgreSQL; ClickHouse — аналитическая копия
+  событий из Kafka (без кода на Python), из неё дашборд Grafana и при `CLICKHOUSE_ENABLED` —
+  еженедельный отчёт.
+
+### Как повторить
+
+```bash
+docker run -d --name bench-pg --memory 4500m -e POSTGRES_USER=bench -e POSTGRES_PASSWORD=bench   -e POSTGRES_DB=bench -p 127.0.0.1:55432:5432 --tmpfs /var/lib/postgresql/data:rw,size=3500m   pgvector/pgvector:pg17 -c max_wal_size=512MB
+docker run -d --name bench-ch --memory 2g -e CLICKHOUSE_USER=beauty -e CLICKHOUSE_PASSWORD=beauty   -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=0 -p 127.0.0.1:58123:8123 clickhouse/clickhouse-server:25.3
+POSTGRES_PORT=55432 POSTGRES_USER=bench POSTGRES_PASSWORD=bench POSTGRES_DB=bench   CLICKHOUSE_PORT=58123 poetry run python -m scripts.generate_events --rows 10000000
+docker rm -f -v bench-pg bench-ch
+```
+
+Лимиты памяти обязательны: без них заливка 10 млн строк на машине с 8 ГБ у VM Docker может
+исчерпать память VM — тогда падает весь Docker, а не один запрос.

@@ -1,0 +1,8 @@
+<!-- Настройки librdkafka для движка Kafka ClickHouse (/etc/clickhouse-server/config.d/kafka.xml).
+     Новая группа потребителей clickhouse читает топики с начала хранения (7 дней), а не с конца:
+     при первом старте ClickHouse история заливается сама — это и есть перечитывание журнала. -->
+<clickhouse>
+    <kafka>
+        <auto_offset_reset>smallest</auto_offset_reset>
+    </kafka>
+</clickhouse>

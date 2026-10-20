@@ -8,10 +8,10 @@
 
 import hashlib
 import uuid
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import Text, cast, delete, func, literal, or_, select, text
+from sqlalchemy import Text, and_, cast, delete, func, literal, or_, select, text
 from sqlalchemy.dialects.postgresql import TSQUERY, insert
 
 from beauty_agent.db.models import KnowledgeChunk, KnowledgeItem
@@ -118,12 +118,21 @@ class KnowledgeRepository(SalonRepository[KnowledgeItem]):
         await self.session.flush()
 
     async def hybrid_search(
-        self, question: str, vector: list[float], embedding_model: str, *, k: int = 5
+        self,
+        question: str,
+        vector: list[float],
+        embedding_model: str,
+        *,
+        k: int = 5,
+        sources: Collection[KnowledgeSource] | None = None,
     ) -> list[Found]:
+        """sources — только эти виды документов (FAQ и карточка, когда сайт ищет индексатор)."""
         # Фильтр по салону применяется к результатам HNSW: итеративный обход индекса (pgvector 0.8)
         # добирает кандидатов, пока не наберётся 20 своих, а не отдаёт 20 общих с отсевом чужих
         await self.session.execute(text("SET LOCAL hnsw.iterative_scan = relaxed_order"))
         own = KnowledgeChunk.salon_id == self.salon_id
+        if sources is not None:
+            own = and_(own, KnowledgeChunk.source.in_(list(sources)))
 
         distance = KnowledgeChunk.embedding.cosine_distance(vector)
         nearest = (

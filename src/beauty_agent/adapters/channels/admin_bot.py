@@ -107,6 +107,17 @@ class AdminBotApi:
         result = await self.telegram.call(self.token, "sendMessage", payload)
         return int(result["message_id"]) if isinstance(result, dict) and "message_id" in result else None
 
+    async def send_document(self, chat_id: str, filename: str, content: bytes, *, caption: str = "") -> None:
+        await self.telegram.upload(
+            self.token,
+            "sendDocument",
+            {"chat_id": chat_id, "caption": _clip(caption, 1000)},
+            "document",
+            filename,
+            content,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
     async def answer_callback(self, callback_id: str, text: str) -> None:
         await self.telegram.call(self.token, "answerCallbackQuery", {"callback_query_id": callback_id, "text": text})
 
@@ -160,6 +171,16 @@ class AdminBotNotifier:
             salon = await session.get(Salon, salon_id)
             chats = await AdminsRepository(session).chats_of_salon(salon_id)
         return (salon.name if salon else "Салон"), chats
+
+    async def send_document_to_owners(
+        self, salon_id: uuid.UUID, filename: str, content: bytes, *, caption: str = ""
+    ) -> int:
+        """Файл — только владельцам салона (выгрузка для счёта); сколько чатов получили."""
+        async with self.session_factory() as session:
+            chats = await AdminsRepository(session).chats_of_salon(salon_id, role=AdminRole.OWNER)
+        for chat_id in chats:
+            await self.api.send_document(chat_id, filename, content, caption=caption)
+        return len(chats)
 
     async def notify(self, event: AdminEvent) -> None:
         """Уведомление не должно ронять обработку сообщения клиента: ошибки — только в лог."""

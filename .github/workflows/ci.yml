@@ -93,9 +93,17 @@ jobs:
           retention-days: 14
 
   build:
-    name: Docker image
+    name: Docker image (${{ matrix.image }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: beauty-agent
+            dockerfile: deploy/Dockerfile
+          - image: beauty-indexer
+            dockerfile: services/indexer/Dockerfile
     steps:
       - uses: actions/checkout@v7
         with:
@@ -106,8 +114,8 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: deploy/Dockerfile
+          file: ${{ matrix.dockerfile }}
           push: false
-          tags: beauty-agent:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

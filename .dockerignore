@@ -7,6 +7,9 @@
 !poetry.toml
 !alembic.ini
 !src/
+# индексатор (services/indexer/Dockerfile): код и миграции; тесты удаляются при сборке
+!services/indexer/alembic.ini
+!services/indexer/beauty_indexer/
 
 # Внутри разрешённых папок — без байт-кода
 **/__pycache__

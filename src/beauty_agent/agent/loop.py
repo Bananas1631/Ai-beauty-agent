@@ -234,6 +234,8 @@ class Agent:
         version = await ctx.knowledge_version()
         if ctx.release is not None:
             await ctx.release()  # запрос версии не держит соединение, пока агент ждёт модель
+        if version is None:
+            return None, None
         return Scope(ctx.salon_id, self.prompt_version, self.llm.model_key, version), normalized
 
     def _answer_without_llm(self, verdict: InputVerdict, ctx: ToolContext, result: AgentResult) -> None:

@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from beauty_agent.db.models import Salon, SalonWeekStats
 from beauty_agent.domain.events import (
-    TOPICS,
+    STATS_TOPICS,
     BookingAttributed,
     BookingCancelled,
     BookingCreated,
@@ -56,7 +56,7 @@ def increments(event: Event, salon: Salon) -> dict[str, int | Decimal]:
 class WeeklyStatsHandler:
     def __init__(self, *, group: str = GROUP, topics: Sequence[str] | None = None) -> None:
         self._group = group
-        self._topics = tuple(topics or sorted(set(TOPICS.values())))
+        self._topics = tuple(topics or STATS_TOPICS)
 
     @property
     def group(self) -> str:

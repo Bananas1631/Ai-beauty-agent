@@ -49,7 +49,7 @@ async def replay(consumer: EventConsumer, *, timeout_s: float) -> PollResult:
 async def run(args: argparse.Namespace) -> PollResult:
     settings = get_settings()
     runtime = create_runtime(settings)
-    handler = HANDLERS[args.handler]()
+    handler = HANDLERS[args.handler](runtime)
     group = args.group or f"{handler.group}-replay-{datetime.now(UTC):%Y%m%d%H%M%S}"
     dlq = EventProducer(settings.kafka)
     await dlq.start()

@@ -1,0 +1,16 @@
+# Источник ClickHouse для дашборда аналитики (только локальный compose, профиль analytics).
+# Пароль — из окружения контейнера Grafana, в файле его нет.
+apiVersion: 1
+datasources:
+  - name: ClickHouse
+    uid: clickhouse
+    type: grafana-clickhouse-datasource
+    editable: false
+    jsonData:
+      host: clickhouse
+      port: 8123
+      protocol: http
+      username: beauty
+      defaultDatabase: analytics
+    secureJsonData:
+      password: $CLICKHOUSE_PASSWORD

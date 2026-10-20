@@ -19,6 +19,7 @@ SITE = "https://lavanda.example/"
 def queue(app: FastAPI) -> RecordingQueue:
     recording = RecordingQueue()
     app.state.runtime.queue = recording
+    app.state.runtime.reindexer = recording  # KNOWLEDGE_BACKEND=local: переиндексация — задачей в очередь
     return recording
 
 

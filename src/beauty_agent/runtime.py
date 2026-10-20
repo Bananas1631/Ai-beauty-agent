@@ -17,6 +17,7 @@ from beauty_agent.adapters.channels.max import MaxBotApi, tls_context
 from beauty_agent.adapters.channels.telegram import TelegramBotApi
 from beauty_agent.adapters.channels.vk import VkApi
 from beauty_agent.adapters.crm.factory import ProviderRegistry
+from beauty_agent.adapters.knowledge_client import KnowledgeClient, ServiceTokens
 from beauty_agent.adapters.latency import SlowLLM
 from beauty_agent.adapters.llm.base import LLMClient
 from beauty_agent.adapters.llm.models import build_clients, build_embedder, build_vision
@@ -34,11 +35,13 @@ from beauty_agent.conversation.service import ConversationService
 from beauty_agent.conversation.shadow_mode import DraftPublisher, ShadowMode
 from beauty_agent.core.config import Settings
 from beauty_agent.core.db import make_engine, make_session_factory
+from beauty_agent.core.jobs import ReindexQueue
 from beauty_agent.core.redis import make_redis
-from beauty_agent.core.resilience import RedisTokenBucket
+from beauty_agent.core.resilience import CircuitBreaker, RedisTokenBucket
 from beauty_agent.core.security import Security
 from beauty_agent.core.tracing import Tracer, make_tracer
 from beauty_agent.domain.enums import Channel
+from beauty_agent.events.handlers.knowledge import EventReindexQueue
 from beauty_agent.rag.safe_http import make_safe_client
 
 YCLIENTS_RATE_KEY = "ba:yclients:rps"  # лимит YCLIENTS — на IP сервера, общий для всех процессов
@@ -89,11 +92,14 @@ class Runtime:
     shadow: ShadowMode
     handoff: Handoff
     queue: MessageQueue
+    reindexer: ReindexQueue  # переиндексация сайта: задача Celery или событие индексатору (ADR 014)
     senders: dict[Channel, ChannelSender] = field(default_factory=dict)
+    knowledge: KnowledgeClient | None = None
     inbound: InboundGate | None = None
     processor: InboundProcessor | None = None
     photo: PhotoProcessor | None = None
     admin_bot: AdminBot | None = None
+    admin_bot_notifier: AdminBotNotifier | None = None  # файлы владельцам: выгрузка для счёта
 
     async def close(self) -> None:
         self.tracer.flush()
@@ -151,6 +157,20 @@ def create_runtime(
         if settings.llm.answer_cache
         else None
     )
+    knowledge = settings.knowledge
+    knowledge_client = (
+        KnowledgeClient(
+            knowledge.indexer_url,
+            http,
+            ServiceTokens(security, ("knowledge:read",)),
+            timeout_s=knowledge.timeout_s,
+            breaker=CircuitBreaker(
+                "indexer", failure_threshold=knowledge.failure_threshold, recovery_s=knowledge.recovery_s
+            ),
+        )
+        if knowledge.backend != "local"
+        else None
+    )
     conversations = ConversationService(
         session_factory=session_factory,
         redis=redis,
@@ -163,6 +183,8 @@ def create_runtime(
         tracer=tracer,
         privacy=privacy,
         answer_cache=answer_cache,
+        knowledge_backend=knowledge.backend,
+        knowledge_client=knowledge_client,
     )
     vk = VkApi(http)
     max_bot = MaxBotApi(max_http, base_url=settings.max_bot.api_url)
@@ -179,6 +201,11 @@ def create_runtime(
     shadow = ShadowMode(session_factory, outbox, states, publisher)
     handoff = Handoff(session_factory, outbox, states)
     queue = queue or NullQueue()
+    reindexer: ReindexQueue = queue
+    if knowledge.backend == "indexer":
+        reindexer = EventReindexQueue(session_factory)
+    elif knowledge.backend == "shadow":
+        reindexer = EventReindexQueue(session_factory, local=queue)
     runtime = Runtime(
         settings=settings,
         engine=engine,
@@ -201,8 +228,11 @@ def create_runtime(
         shadow=shadow,
         handoff=handoff,
         queue=queue,
+        reindexer=reindexer,
         senders=senders,
+        knowledge=knowledge_client,
     )
+    runtime.admin_bot_notifier = admin_notifier
     runtime.inbound = InboundGate(redis, debouncer, queue)
     runtime.processor = InboundProcessor(
         session_factory, debouncer, conversations, outbox, notifier, shadow, queue=queue

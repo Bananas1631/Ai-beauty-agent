@@ -20,7 +20,7 @@ help:
 	@echo make down      - stop services, data in volumes is kept
 	@echo make ps        - service status
 	@echo make logs      - follow api logs
-	@echo make migrate   - apply database migrations
+	@echo make migrate   - apply database migrations of the main service and the indexer
 	@echo make chat      - chat with the agent in the terminal on the fake CRM
 	@echo make evals     - run evals, MODELS=offline,qwen3-235b DATASET=booking/v1
 	@echo make seed      - demo salon from the fake CRM: /s/demo-lavanda
@@ -68,8 +68,10 @@ ps:
 logs:
 	$(COMPOSE) logs -f api
 
+# Миграции основного сервиса и индексатора (схема knowledge, ADR 014) — у каждого свои
 migrate:
 	$(RUN) alembic upgrade head
+	$(RUN) alembic -c services/indexer/alembic.ini upgrade head
 
 chat:
 	$(RUN) python -m scripts.chat_cli --debug

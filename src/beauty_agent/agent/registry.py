@@ -59,8 +59,9 @@ class ToolContext:
     # Вызывается после каждого инструмента: вернуть соединение с БД в пул, чтобы оно не простаивало,
     # пока агент ждёт ответ модели (docs/performance.md, нагрузочный тест)
     release: Callable[[], Awaitable[None]] | None = None
-    # Версия базы знаний салона — часть ключа кэша ответов (agent/cache.py); None — кэш не используется
-    knowledge_version: Callable[[], Awaitable[str]] | None = None
+    # Версия базы знаний салона — часть ключа кэша ответов (agent/cache.py); None — кэш не используется.
+    # Функция тоже может вернуть None: версия сейчас неизвестна (индексатор недоступен) — без кэша
+    knowledge_version: Callable[[], Awaitable[str | None]] | None = None
     # Описание фото-референса из этого сообщения (workers/photo.py) — для инструмента photo_services
     photo: PhotoDescription | None = None
 

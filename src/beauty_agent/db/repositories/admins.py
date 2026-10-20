@@ -41,8 +41,10 @@ class AdminsRepository:
         )
         await self.session.execute(statement)
 
-    async def chats_of_salon(self, salon_id: uuid.UUID) -> list[str]:
+    async def chats_of_salon(self, salon_id: uuid.UUID, *, role: AdminRole | None = None) -> list[str]:
         statement = select(SalonAdmin.chat_id).where(SalonAdmin.salon_id == salon_id, SalonAdmin.is_active)
+        if role is not None:
+            statement = statement.where(SalonAdmin.role == role)
         return list(await self.session.scalars(statement))
 
     async def salons_of(self, telegram_user_id: str) -> Sequence[Salon]:

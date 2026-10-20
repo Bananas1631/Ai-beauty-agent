@@ -11,11 +11,13 @@
 - Каждая группа потребителей читает топик независимо: отчёты, аналитика и будущий сервис
   на Kotlin получают одни и те же события, а продюсер о них не знает.
 - Lag (сколько событий группа ещё не прочитала) — метрика Prometheus по группе и топику.
+- Отметка об обработке — claim: по умолчанию processed_events основного сервиса; у индексатора
+  своя таблица в своей схеме (ADR 014), остальная логика та же.
 """
 
 import asyncio
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
@@ -69,6 +71,9 @@ class PollResult:
         return self
 
 
+Claim = Callable[[AsyncSession, str, Event], Awaitable[bool]]
+
+
 async def claim(session: AsyncSession, group: str, event: Event) -> bool:
     """Отметить событие обработанным этой группой; False — уже обработано (дубль)."""
     statement = (
@@ -94,6 +99,8 @@ class EventConsumer:
         batch_max: int = 100,
         subscribe: bool = True,
         kafka_group: str | None = None,
+        claim: Claim = claim,
+        max_poll_interval_ms: int = 300_000,
     ) -> None:
         """subscribe=False — партиции назначаются вручную (assign_all): перечитывание одним процессом.
 
@@ -109,6 +116,7 @@ class EventConsumer:
         self.max_attempts = max_attempts
         self.retry_delay_s = retry_delay_s
         self.batch_max = batch_max
+        self.claim = claim
         self.consumer = AIOKafkaConsumer(
             *(handler.topics if subscribe else ()),
             bootstrap_servers=settings.bootstrap_servers,
@@ -117,6 +125,7 @@ class EventConsumer:
             enable_auto_commit=False,
             auto_offset_reset="earliest",  # новая группа читает всё, что хранится в топике
             max_poll_records=batch_max,
+            max_poll_interval_ms=max_poll_interval_ms,
             request_timeout_ms=settings.request_timeout_ms,
         )
 
@@ -209,7 +218,7 @@ class EventConsumer:
         for attempt in range(1, self.max_attempts + 1):
             try:
                 async with self.session_factory() as session, session.begin():
-                    if not await claim(session, self.handler.group, event):
+                    if not await self.claim(session, self.handler.group, event):
                         return PollResult(duplicates=1)
                     await self.handler.handle(session, event)
                 return PollResult(handled=1)

@@ -14,6 +14,8 @@
 
 Опубликованное старше срока хранения Kafka удаляется: перечитать его можно только из Kafka,
 а пока оно там — из outbox тоже. Неопубликованное не удаляется никогда.
+
+Тот же relay публикует outbox индексатора (table=… из его схемы knowledge, ADR 014).
 """
 
 import asyncio
@@ -34,7 +36,7 @@ from beauty_agent.core.config import KafkaSettings, get_settings
 from beauty_agent.core.db import make_engine, make_session_factory
 from beauty_agent.core.logging import configure_logging
 from beauty_agent.db.models import EventOutbox
-from beauty_agent.db.models.event_outbox import PENDING
+from beauty_agent.db.models.event_outbox import PENDING, OutboxColumns
 from beauty_agent.events.producer import EventProducer, OutgoingEvent, ensure_topics
 
 logger = structlog.get_logger(__name__)
@@ -48,7 +50,7 @@ class Publisher(Protocol):
     async def publish(self, events: Sequence[OutgoingEvent]) -> None: ...
 
 
-def outgoing(row: EventOutbox) -> OutgoingEvent:
+def outgoing(row: OutboxColumns) -> OutgoingEvent:
     return OutgoingEvent(
         topic=row.topic,
         key=str(row.salon_id),
@@ -71,20 +73,25 @@ class OutboxRelay:
         *,
         batch: int = 200,
         retention: timedelta = timedelta(days=7),
+        table: type[OutboxColumns] = EventOutbox,
+        lock_namespace: int = LOCK_NAMESPACE,
     ) -> None:
         self.session_factory = session_factory
         self.publisher = publisher
         self.batch = batch
         self.retention = retention
+        self.table = table
+        self.lock_namespace = lock_namespace
 
     async def pending_salons(self) -> list[uuid.UUID]:
         """Салоны с неопубликованными событиями — начиная с самого давнего события."""
         async with self.session_factory() as session:
+            table = self.table
             rows = await session.scalars(
-                select(EventOutbox.salon_id)
+                select(table.salon_id)
                 .where(PENDING)
-                .group_by(EventOutbox.salon_id)
-                .order_by(func.min(EventOutbox.id))
+                .group_by(table.salon_id)
+                .order_by(func.min(table.id))
                 .limit(SALONS_PER_ROUND)
             )
             return list(rows)
@@ -92,15 +99,16 @@ class OutboxRelay:
     async def publish_salon(self, salon_id: uuid.UUID) -> int:
         async with self.session_factory() as session, session.begin():
             locked = await session.scalar(
-                select(func.pg_try_advisory_xact_lock(LOCK_NAMESPACE, func.hashtext(str(salon_id))))
+                select(func.pg_try_advisory_xact_lock(self.lock_namespace, func.hashtext(str(salon_id))))
             )
             if not locked:
                 return 0  # салон публикует другой экземпляр relay
+            table = self.table
             rows = list(
                 await session.scalars(
-                    select(EventOutbox)
-                    .where(EventOutbox.salon_id == salon_id, PENDING)
-                    .order_by(EventOutbox.id)
+                    select(table)
+                    .where(table.salon_id == salon_id, PENDING)
+                    .order_by(table.id)
                     .limit(self.batch)
                     .with_for_update(skip_locked=True)
                 )
@@ -113,7 +121,7 @@ class OutboxRelay:
         return len(rows)
 
     async def mark_published(self, session: AsyncSession, ids: Sequence[int]) -> None:
-        await session.execute(update(EventOutbox).where(EventOutbox.id.in_(ids)).values(published_at=func.now()))
+        await session.execute(update(self.table).where(self.table.id.in_(ids)).values(published_at=func.now()))
 
     async def run_once(self) -> int:
         published = 0
@@ -123,15 +131,14 @@ class OutboxRelay:
 
     async def backlog(self) -> int:
         async with self.session_factory() as session:
-            return int(await session.scalar(select(func.count()).select_from(EventOutbox).where(PENDING)) or 0)
+            return int(await session.scalar(select(func.count()).select_from(self.table).where(PENDING)) or 0)
 
     async def purge(self, now: datetime | None = None) -> int:
         cutoff = (now or datetime.now(UTC)) - self.retention
         async with self.session_factory() as session:
+            table = self.table
             deleted = await session.execute(
-                delete(EventOutbox)
-                .where(EventOutbox.published_at.is_not(None), EventOutbox.published_at < cutoff)
-                .returning(EventOutbox.id)
+                delete(table).where(table.published_at.is_not(None), table.published_at < cutoff).returning(table.id)
             )
             count = len(deleted.all())
             await session.commit()

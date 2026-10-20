@@ -15,6 +15,10 @@ services:
       REDIS_HOST: redis
       RABBITMQ_HOST: rabbitmq
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      # Сведения о сайте: local (свой RAG), shadow (сравнение с индексатором) или indexer (ADR 014)
+      KNOWLEDGE_BACKEND: ${KNOWLEDGE_BACKEND:-local}
+      KNOWLEDGE_INDEXER_URL: http://indexer:8001
+      CLICKHOUSE_HOST: clickhouse
     ports:
       - "127.0.0.1:8000:8000"
     depends_on: &app-deps
@@ -67,15 +71,51 @@ services:
     healthcheck:
       disable: true
 
-  # Потребители доменных событий: группа weekly-stats копит недельную статистику для отчётов.
+  # Потребители доменных событий: weekly-stats — недельная статистика для отчётов, knowledge-sync —
+  # результат переиндексации из индексатора, partner-webhooks — подписанные вебхуки партнёрам.
   # Масштабирование — replicas: Kafka раздаст экземплярам 6 партиций и перераспределит при остановке
   consumers:
     <<: *app
     ports: []
-    command: ["python", "-m", "beauty_agent.events.consumers", "weekly-stats"]
+    command: ["python", "-m", "beauty_agent.events.consumers", "weekly-stats", "knowledge-sync", "partner-webhooks"]
     environment:
       <<: *app-env
       METRICS_PORT: "9102"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+
+  # Индексатор сайтов — отдельный сервис со своей схемой knowledge (ADR 014): REST-поиск для агента.
+  # Схема: make migrate (миграции основного сервиса и индексатора)
+  indexer:
+    build:
+      context: ..
+      dockerfile: services/indexer/Dockerfile
+    env_file: ../.env
+    environment: &indexer-env
+      POSTGRES_HOST: postgres
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      INDEXER_JWKS_URL: http://api:8000/.well-known/jwks.json
+    ports:
+      - "127.0.0.1:8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Воркер индексатора: site.reindex.requested из Kafka → обход сайта → knowledge.updated через свой outbox
+  indexer-worker:
+    build:
+      context: ..
+      dockerfile: services/indexer/Dockerfile
+    env_file: ../.env
+    environment:
+      <<: *indexer-env
+      METRICS_PORT: "9103"
+    command: ["python", "-m", "beauty_indexer.worker"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -114,9 +154,14 @@ services:
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GRAFANA_ALERT_BOT_TOKEN: ${GRAFANA_ALERT_BOT_TOKEN:-}
       GRAFANA_ALERT_CHAT_ID: ${GRAFANA_ALERT_CHAT_ID:-}
+      # Источник ClickHouse для дашборда аналитики — только локально (в проде ClickHouse появится в шаге 25)
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource 4.0.0
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-beauty}
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./grafana/clickhouse/datasource.yml:/etc/grafana/provisioning/datasources/clickhouse.yml:ro
+      - ./grafana/clickhouse/analytics.json:/var/lib/grafana/dashboards/analytics.json:ro
       - grafanadata:/var/lib/grafana
     ports:
       - "127.0.0.1:3000:3000"
@@ -203,6 +248,36 @@ services:
       kafka:
         condition: service_healthy
 
+  # ClickHouse — аналитика событий (шаг 24): сам читает топики Kafka своей группой clickhouse
+  # (deploy/clickhouse/init.sql, без кода на Python). При первом старте заливает историю — всё, что
+  # хранится в Kafka. Отчёты из него — CLICKHOUSE_ENABLED=true. HTTP 8123 — только с этой машины.
+  # Запуск: docker compose -f deploy/docker-compose.yml --profile analytics up -d
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3
+    profiles: ["analytics"]
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-beauty}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-beauty}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "0"
+    ports:
+      - "127.0.0.1:8123:8123"
+    volumes:
+      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./clickhouse/kafka.xml:/etc/clickhouse-server/config.d/kafka.xml:ro
+      - clickhousedata:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   rabbitmq:
     image: rabbitmq:4-management-alpine
     # RabbitMQ хранит данные в папке с именем узла, а оно строится из hostname
@@ -227,5 +302,6 @@ volumes:
   redisdata:
   rabbitmqdata:
   kafkadata:
+  clickhousedata:
   prometheusdata:
   grafanadata:

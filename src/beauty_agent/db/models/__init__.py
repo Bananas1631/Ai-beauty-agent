@@ -14,6 +14,7 @@ from beauty_agent.db.models.conversation import Conversation, Message, ToolCall
 from beauty_agent.db.models.event_outbox import EventOutbox
 from beauty_agent.db.models.events import ProcessedEvent, SalonWeekStats
 from beauty_agent.db.models.knowledge import KnowledgeChunk, KnowledgeItem
+from beauty_agent.db.models.oauth import OAuthClient
 from beauty_agent.db.models.outbox import OutboundMessage
 from beauty_agent.db.models.salon import ChannelAccount, Salon
 
@@ -33,6 +34,7 @@ __all__ = [
     "Master",
     "MasterService",
     "Message",
+    "OAuthClient",
     "OutboundMessage",
     "ProcessedEvent",
     "Reminder",

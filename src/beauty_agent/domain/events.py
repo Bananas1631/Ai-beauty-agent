@@ -54,6 +54,7 @@ class BookingAttributedData(EventData):
     price: Decimal | None = None
     status: BookingStatus
     billing_month: str = Field(pattern=r"^\d{4}-\d{2}$")  # месяц визита по времени салона
+    conversation_id: uuid.UUID | None = None  # диалог, из которого пришла запись: воронка в ClickHouse
 
 
 class MessageReceivedData(EventData):
@@ -74,9 +75,32 @@ class LlmCallFinishedData(EventData):
     cost_rub: Decimal = Field(ge=0)
     latency_ms: int = Field(ge=0)
     tool_calls: int = Field(ge=0)
+    offers_shown: int = Field(0, ge=0)  # вариантов времени показано клиенту в этом ходе (воронка записи)
     cache_hit: bool = False
     handed_off: bool = False
     guardrail: str | None = Field(None, max_length=64)
+
+
+class SiteReindexRequestedData(EventData):
+    """Основной сервис просит индексатор обойти сайт салона (ADR 014). Адрес сайта салона —
+    публичные данные, не персональные."""
+
+    site_url: str = Field(max_length=2048)
+    job_id: uuid.UUID | None = None  # задача в JobStore основного сервиса: индексатор вернёт её в ответе
+    max_pages: int = Field(30, ge=1, le=200)
+
+
+class KnowledgeUpdatedData(EventData):
+    """Индексатор закончил обход: новая версия базы знаний сайта — ключ кэша ответов меняется."""
+
+    status: Literal["done", "failed"]
+    version: str | None = Field(None, max_length=100)
+    job_id: uuid.UUID | None = None
+    pages_seen: int = Field(0, ge=0)
+    pages_indexed: int = Field(0, ge=0)
+    pages_unchanged: int = Field(0, ge=0)
+    chunks: int = Field(0, ge=0)
+    error: str | None = Field(None, max_length=300)
 
 
 class DomainEvent(BaseModel):
@@ -118,8 +142,25 @@ class LlmCallFinished(DomainEvent):
     data: LlmCallFinishedData
 
 
+class SiteReindexRequested(DomainEvent):
+    type: Literal["site.reindex.requested"] = "site.reindex.requested"
+    data: SiteReindexRequestedData
+
+
+class KnowledgeUpdated(DomainEvent):
+    type: Literal["knowledge.updated"] = "knowledge.updated"
+    data: KnowledgeUpdatedData
+
+
 Event = Annotated[
-    BookingCreated | BookingRescheduled | BookingCancelled | BookingAttributed | MessageReceived | LlmCallFinished,
+    BookingCreated
+    | BookingRescheduled
+    | BookingCancelled
+    | BookingAttributed
+    | MessageReceived
+    | LlmCallFinished
+    | SiteReindexRequested
+    | KnowledgeUpdated,
     Field(discriminator="type"),
 ]
 EVENT_ADAPTER: TypeAdapter[Event] = TypeAdapter(Event)
@@ -130,6 +171,8 @@ EVENT_TYPES: tuple[type[DomainEvent], ...] = (
     BookingAttributed,
     MessageReceived,
     LlmCallFinished,
+    SiteReindexRequested,
+    KnowledgeUpdated,
 )
 
 # Топик — по сущности: события одной записи (создана → перенесена → отменена) в одном топике,
@@ -141,7 +184,12 @@ TOPICS: dict[str, str] = {
     "booking.attributed": "beauty.bookings",
     "message.received": "beauty.messages",
     "llm.call.finished": "beauty.llm",
+    # Обмен с индексатором (ADR 014): запрос переиндексации и её результат — по порядку внутри салона
+    "site.reindex.requested": "beauty.knowledge",
+    "knowledge.updated": "beauty.knowledge",
 }
+# Топики статистики салона: события записи, сообщений и ответов агента
+STATS_TOPICS: tuple[str, ...] = ("beauty.bookings", "beauty.llm", "beauty.messages")
 
 
 def topic_of(event: DomainEvent) -> str:

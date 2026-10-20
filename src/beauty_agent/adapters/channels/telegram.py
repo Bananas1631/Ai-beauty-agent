@@ -118,6 +118,37 @@ class TelegramBotApi:
             raise ChannelUnavailableError(f"Telegram: {code}")
         raise ChannelRejectedError(f"Telegram отклонил запрос: {code}")
 
+    async def upload(
+        self,
+        token: str,
+        method: str,
+        fields: dict[str, str],
+        file_field: str,
+        filename: str,
+        content: bytes,
+        content_type: str,
+        *,
+        timeout_s: float = 60.0,
+    ) -> Any:
+        """Метод с файлом (sendDocument): multipart/form-data вместо JSON. Ответ — как у call."""
+        url = f"{self.base_url}/bot{check_token(token)}/{method}"
+        try:
+            response = await self.http.post(
+                url, data=fields, files={file_field: (filename, content, content_type)}, timeout=timeout_s
+            )
+        except httpx.HTTPError as exc:
+            raise ChannelUnavailableError(f"Telegram недоступен: {type(exc).__name__}") from exc
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ChannelUnavailableError("Telegram вернул не JSON") from exc
+        if body.get("ok"):
+            return body.get("result")
+        code = int(body.get("error_code") or response.status_code)
+        if code == 429 or code >= 500:
+            raise ChannelUnavailableError(f"Telegram: {code}")
+        raise ChannelRejectedError(f"Telegram отклонил запрос: {code}")
+
     # ------------------------------------------------------------- ChannelSender
 
     async def send(self, credentials: dict[str, Any], delivery: Delivery) -> str | None:

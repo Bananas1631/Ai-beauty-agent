@@ -218,8 +218,27 @@ class KafkaSettings(EnvSection):
     request_timeout_ms: int = Field(10_000, ge=1000, le=120_000)
 
 
+class ClickHouseSettings(EnvSection):
+    """Аналитическое хранилище (шаг 24): события из Kafka без персональных данных.
+
+    Источник правды — PostgreSQL; ClickHouse — для отчётов по большим объёмам. enabled — еженедельный
+    отчёт и выгрузка для счёта берут аналитику оттуда (после заливки истории перечитыванием Kafka).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="CLICKHOUSE_")
+
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 8123
+    user: str = "beauty"
+    password: SecretStr = SecretStr("beauty")
+    database: str = "analytics"
+    connect_timeout_s: float = Field(5.0, gt=0, le=60)
+    query_timeout_s: float = Field(30.0, gt=0, le=600)
+
+
 class SecuritySettings(EnvSection):
-    """Ключи шифрования токенов каналов, подписи вебхуков и JWT для API инбокса.
+    """Ключи шифрования токенов каналов, подписи вебхуков и JWT.
 
     В проде обязательны (проверяет create_app). Локально, если не заданы, используются
     известные dev-ключи: ими нельзя шифровать настоящие токены.
@@ -230,13 +249,36 @@ class SecuritySettings(EnvSection):
     # Ключи Fernet через запятую: первый шифрует, остальные только расшифровывают (ротация ключа)
     fernet_keys: SecretStr | None = None
     webhook_key: SecretStr | None = None  # из него выводится secret_token вебхука каждого канала
+    # Ключи подписи JWT и исходящих вебхуков — Ed25519, 32 байта в base64url через запятую.
+    # Первый подписывает, все публикуются в /.well-known/jwks.json (ротация — docs/security.md).
+    # Не заданы — ключ выводится из jwt_secret: обновление с HS256 без новой переменной
+    signing_keys: SecretStr | None = None
     jwt_secret: SecretStr | None = None
     jwt_ttl_s: int = 15 * 60  # access-токен короткий: утёкший живёт 15 минут
     refresh_ttl_s: int = 30 * 24 * 3600  # refresh-токен меняется при каждом обновлении
+    # Адрес издателя в токенах (iss): другие сервисы сверяют его и берут ключи с этого адреса
+    issuer: str = "beauty-agent"
 
     @property
     def configured(self) -> bool:
-        return bool(self.fernet_keys and self.webhook_key and self.jwt_secret)
+        return bool(self.fernet_keys and self.webhook_key and (self.signing_keys or self.jwt_secret))
+
+
+class KnowledgeSettings(EnvSection):
+    """Откуда агент берёт сведения о сайте салона (ADR 014, strangler fig).
+
+    local — свой модуль RAG, как до индексатора; shadow — ответ из своего модуля, а индексатор
+    спрашивается параллельно и ответы сравниваются (метрика и лог); indexer — сайт ищет индексатор,
+    FAQ и карточка филиала — свой модуль.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="KNOWLEDGE_")
+
+    backend: Literal["local", "shadow", "indexer"] = "local"
+    indexer_url: str = "http://localhost:8001"
+    timeout_s: float = Field(2.0, gt=0, le=30)  # агент ждёт поиск, клиент ждёт агента: недолго
+    failure_threshold: int = Field(5, ge=1, le=100)
+    recovery_s: float = Field(30.0, gt=0, le=600)
 
 
 class MaxSettings(EnvSection):
@@ -269,11 +311,13 @@ class Settings(BaseModel):
     redis: RedisSettings = Field(default_factory=RedisSettings)
     rabbitmq: RabbitMQSettings = Field(default_factory=RabbitMQSettings)
     kafka: KafkaSettings = Field(default_factory=KafkaSettings)
+    clickhouse: ClickHouseSettings = Field(default_factory=ClickHouseSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     yclients: YclientsSettings = Field(default_factory=YclientsSettings)
     sentry: SentrySettings = Field(default_factory=SentrySettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     security: SecuritySettings = Field(default_factory=SecuritySettings)
+    knowledge: KnowledgeSettings = Field(default_factory=KnowledgeSettings)
     max_bot: MaxSettings = Field(default_factory=MaxSettings)
     admin_bot: AdminBotSettings = Field(default_factory=AdminBotSettings)
 

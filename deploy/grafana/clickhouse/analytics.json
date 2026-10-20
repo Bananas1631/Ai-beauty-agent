@@ -1,0 +1,172 @@
+{
+  "uid": "beauty-analytics",
+  "title": "beauty-agent — аналитика (ClickHouse)",
+  "description": "События из Kafka в ClickHouse: расходы на LLM, задержка, воронка записи. Без персональных данных.",
+  "tags": [
+    "beauty-agent",
+    "clickhouse"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "templating": {
+    "list": [
+      {
+        "name": "salon",
+        "label": "Салон",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "clickhouse"
+        },
+        "query": "SELECT 'Все' UNION ALL SELECT DISTINCT toString(salon_id) FROM analytics.events",
+        "definition": "SELECT 'Все' UNION ALL SELECT DISTINCT toString(salon_id) FROM analytics.events",
+        "refresh": 2,
+        "current": {
+          "text": "Все",
+          "value": "Все"
+        },
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Расход на LLM по салонам за сутки, ₽",
+      "description": "llm.call.finished, FINAL — дубли доставки схлопнуты на чтении",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyRUB"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT toStartOfDay(ts) AS time, toString(salon_id) AS salon, sum(cost_rub) AS cost\nFROM analytics.events FINAL\nWHERE event_type = 'llm.call.finished' AND $__timeFilter(ts)\nGROUP BY time, salon\nORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Расход по салонам и моделям за период",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "sql",
+          "rawSql": "SELECT toString(salon_id) AS salon, if(model = '', 'без модели', model) AS model, count() AS answers,\n       sum(prompt_tokens + completion_tokens) AS tokens, sum(cost_rub) AS cost_rub\nFROM analytics.events FINAL\nWHERE event_type = 'llm.call.finished' AND $__timeFilter(ts)\nGROUP BY salon, model\nORDER BY cost_rub DESC"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Задержка ответа агента по дням, p50 и p95",
+      "description": "Ответы с вызовом модели (кэш и guardrails не в счёт)",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT toStartOfDay(ts) AS time, quantile(0.5)(latency_ms) AS p50, quantile(0.95)(latency_ms) AS p95\nFROM analytics.events\nWHERE event_type = 'llm.call.finished' AND model != '' AND $__timeFilter(ts)\n  AND ('$salon' = 'Все' OR toString(salon_id) = '$salon')\nGROUP BY time\nORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "bargauge",
+      "title": "Воронка записи: написали → варианты → запись ИИ → визит",
+      "description": "windowFunnel по диалогу, окно 14 дней — как в analytics/queries.py (BOOKING_FUNNEL)",
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "format": 0,
+          "queryType": "sql",
+          "rawSql": "SELECT\n    countIf(level >= 1) AS `Написали`,\n    countIf(level >= 2) AS `Показаны варианты`,\n    countIf(level >= 3) AS `Записались через ИИ`,\n    countIf(level >= 4) AS `Пришли на визит`\nFROM\n(\n    SELECT conversation_id,\n           windowFunnel(1209600)(\n               toDateTime(ts),\n               event_type = 'message.received',\n               event_type = 'llm.call.finished' AND offers_shown > 0,\n               event_type = 'booking.created' AND created_by_ai,\n               event_type = 'booking.attributed'\n           ) AS level\n    FROM analytics.events FINAL\n    WHERE conversation_id IS NOT NULL AND $__timeFilter(ts)\n      AND ('$salon' = 'Все' OR toString(salon_id) = '$salon')\n    GROUP BY conversation_id\n)"
+        }
+      ]
+    }
+  ]
+}

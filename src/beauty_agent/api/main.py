@@ -17,6 +17,7 @@ from beauty_agent.api import health, metrics, pages, v1, widget_ws
 from beauty_agent.api.errors import install_error_handlers
 from beauty_agent.api.middleware import TraceIdMiddleware
 from beauty_agent.api.security import SecurityHeadersMiddleware
+from beauty_agent.api.v1 import oauth
 from beauty_agent.core.config import Settings, get_settings
 from beauty_agent.core.logging import configure_logging
 from beauty_agent.core.metrics import MetricsMiddleware
@@ -67,6 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(metrics.router)
     app.include_router(v1.router)
+    app.include_router(oauth.router)  # /oauth/token и /.well-known/jwks.json — в корне, как принято
     app.include_router(pages.router)
     app.include_router(widget_ws.router)
     app.mount("/static", StaticFiles(directory=STATIC), name="static")

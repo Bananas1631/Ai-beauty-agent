@@ -95,6 +95,12 @@ EVENTS_DEAD_LETTERED = Counter(
     ["group", "topic"],
     namespace=NAMESPACE,
 )
+KNOWLEDGE_SHADOW = Counter(
+    "knowledge_shadow_total",
+    "Сравнение поиска по сайту своим модулем и индексатором в теневом режиме (ADR 014)",
+    ["result"],
+    namespace=NAMESPACE,
+)
 QUEUE_MESSAGES = Gauge(
     "queue_messages",
     "Сообщений в очереди RabbitMQ в момент сбора",
@@ -131,6 +137,11 @@ def consumer_lag(group: str, topic: str, lag: int) -> None:
 
 def event_dead_lettered(group: str, topic: str) -> None:
     EVENTS_DEAD_LETTERED.labels(group=group, topic=topic).inc()
+
+
+def knowledge_shadow(result: str) -> None:
+    """same — индексатор нашёл те же страницы, partial — часть, different — другие, error — не ответил."""
+    KNOWLEDGE_SHADOW.labels(result=result).inc()
 
 
 def outbox_backlog(count: int) -> None:

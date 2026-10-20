@@ -95,6 +95,11 @@ def configure(app: Celery, settings: Settings) -> None:
             # визит наступил — запись засчитана ИИ: событие booking.attributed для потребителей
             "attribute-visits": {"task": "periodic.attribute_visits", "schedule": crontab(minute="*/15")},
             "weekly-report": {"task": "periodic.weekly_report", "schedule": crontab(hour=10, minute=0, day_of_week=1)},
+            # выгрузка для счёта за прошлый месяц — владельцам салонов файлом Excel
+            "monthly-invoice": {
+                "task": "periodic.monthly_invoice",
+                "schedule": crontab(hour=9, minute=0, day_of_month=1),
+            },
         },
     )
 
