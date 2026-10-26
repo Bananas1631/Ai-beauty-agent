@@ -2508,14 +2508,14 @@ zookeeper = ["kazoo (>=2.8.0)"]
 
 [[package]]
 name = "langfuse"
-version = "5.0.1"
+version = "5.0.4"
 description = "Langfuse Python SDK - LLM observability/tracing, datasets, experiments, LLM-as-a-judge evaluation, and prompt management"
 optional = false
 python-versions = "<4.0,>=3.11"
 groups = ["main"]
 files = [
-    {file = "langfuse-5.0.1-py3-none-any.whl", hash = "sha256:2c7aeb95fec7915da3bc005cf4dfc251a1c9d4eb28384161bbbf9447aacf4c44"},
-    {file = "langfuse-5.0.1.tar.gz", hash = "sha256:8435dc7728cb3439326ccbb59938eb5709407331b59470f10bfd00557bac2fa0"},
+    {file = "langfuse-5.0.4-py3-none-any.whl", hash = "sha256:6ab4ddcbc4b33efbd9c7f5feb405bfb0060949e7a170f7410f8fcc52984887a7"},
+    {file = "langfuse-5.0.4.tar.gz", hash = "sha256:f9f13a7a0bf0aad4d75287411cece3172c717d9440e73b4b84255ffffb549c31"},
 ]
 
 [package.dependencies]
@@ -6313,4 +6313,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.13"
-content-hash = "d7848bd8c88c7f1345f3439ca6f6835a26a7848837f80f53ae92944ef8f69545"
+content-hash = "efe841f49fffea8c59e82cd97cef717ecebfaa68d32cf21b47da9754a74d1ec8"
